@@ -1,0 +1,13 @@
+# 构建产物
+module/build/
+dist/
+work/
+
+# 本地签名密钥：首次构建时由 build.sh / build.ps1 自动生成，不要提交
+module/mod.keystore
+
+# 编辑器与系统
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

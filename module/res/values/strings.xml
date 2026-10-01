@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 现代打包下模块的描述走 manifest 的 android:description（android:description 是引用类型，
+         必须指向资源，不能写字符串字面量）。模块名走 android:label。 -->
+    <string name="module_desc" translatable="false">Blocks ads and background tracking in supported apps, hides marketing entries, and keeps real features (campus card, top-up, balance, payment code) working. Supports: YiCampus, WakeUp timetable, JMComic3.</string>
+</resources>

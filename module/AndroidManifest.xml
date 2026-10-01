@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.shitianyaa.friendlyschool"
+    android:versionCode="3"
+    android:versionName="2.1">
+
+    <!-- minSdk 26：libxposed 的 api aar 自己声明了 minSdkVersion=26（实测 aapt2 dump 于
+         api-102.0.0.aar 的 AndroidManifest.xml）。targetSdk 保持 28 不变。 -->
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+
+    <!-- 现代打包（libxposed）下这里**不再**有任何 xposed 系列的 meta-data：
+         模块名走 android:label，描述走 android:description（引用资源，不能写字面量），
+         入口清单/元数据/作用域分别走 META-INF/xposed/{java_init.list,module.prop,scope.list}。
+         少了那三件套会表现为"装了但静默不生效"，所以构建脚本会断言它们确实在 APK 根目录里。 -->
+    <application
+        android:label="FriendlySchool"
+        android:description="@string/module_desc"
+        android:hasCode="true" />
+</manifest>
