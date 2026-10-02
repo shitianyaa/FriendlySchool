@@ -34,6 +34,20 @@ public class FakeFramework implements XposedInterface {
     private final Map<Executable, List<Hooker>> chains = new LinkedHashMap<Executable, List<Hooker>>();
     private final List<String> logs = new ArrayList<String>();
 
+    /** 故障注入：成功注册 failAfterHooks 条后再注册就抛错（默认 -1 = 不注入）。 */
+    private int failAfterHooks = -1;
+    private int interceptCount = 0;
+
+    // ------------------------------------------------------------ 故障注入（供断言）
+
+    /**
+     * 测试用：第 n 次成功注册之后，再一次注册时抛错 —— 用来验证“成组安装失败后整体回滚”。
+     * 默认不注入（-1），只会影响调用它的那条测试。
+     */
+    public void failHookAfter(int n) {
+        this.failAfterHooks = n;
+    }
+
     // ------------------------------------------------------------ 日志（供断言）
 
     public List<String> logs() {
@@ -181,6 +195,10 @@ public class FakeFramework implements XposedInterface {
 
         @Override
         public HookHandle intercept(Hooker hooker) {
+            if (failAfterHooks >= 0 && interceptCount >= failAfterHooks) {
+                throw new IllegalStateException("FakeFramework 注入的 hook 安装失败（测试用）");
+            }
+            interceptCount++;
             List<Hooker> list = chains.get(origin);
             if (list == null) {
                 list = new ArrayList<Hooker>();

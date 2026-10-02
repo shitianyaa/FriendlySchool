@@ -15,8 +15,6 @@
 [![Downloads](https://img.shields.io/github/downloads/shitianyaa/FriendlySchool/total?style=flat-square&color=orange&logo=github&logoColor=white&label=Downloads)](https://github.com/shitianyaa/FriendlySchool/releases)
 -->
 
-简体中文 | [English](README_EN.md)
-
 </div>
 
 ---
@@ -34,7 +32,9 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.1`（versionCode `3`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.1.1`（versionCode `4`）。
+- 版本变更见 [更新日志](CHANGELOG.md)。
+- **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
 
 此前研究与真机验证记录覆盖以下目标版本；其他版本尚未确认兼容：
@@ -67,6 +67,7 @@
 - **关掉付费链路**：卖课 / 会员 / 收银台入口与会员专区全部拦断；
 - **免登录**：不弹登录页、不显示登录卡片（**代价见下**）；
 - **界面精简**：底栏裁到「日程︱课表」、清除顶栏礼包图标与浮窗商城、隐藏「普通提醒」行。
+- **免登录也能解锁外观功能**：不登录账号时夜间 / 简洁模式照常来回切换并在重启后保持，皮肤预览返回不再卡住——做法是本地放行会员判断，服务端账号字段一律不修改；
 
 ### JMComic3 · `com.a7m3p9xv.t6qk2z8.app`
 
@@ -81,6 +82,8 @@
 - **目标 App 升级后可能失效**：升级会改类名/方法名，这是所有 Xposed 模块的共同宿命；日志里会明确写出「找不到」的行。
 - **会移除部分非广告入口**：易校园的首页「课程表」入口、「今日课表」卡片与我的页三大积分卡片；WakeUp 的「我的」整页、三个底栏标签与「普通提醒」行。
 - **WakeUp 免登录的代价**：课表只存本机 —— 云同步不可用，卸载 / 清数据 / 换设备会丢失（学校教务系统的导入页不受影响）。
+- **WakeUp 外观设置跟设备不跟账号**：夜间 / 简洁模式存放在当前安装的应用数据里（模块自有键），不随账号切换；新键不存在时按当前账号的原值初始化，之后以本地值为准；清除应用数据或卸载后该设置丢失。
+- **WakeUp 付费皮肤未验证**：皮肤样式数据与权限仍由服务端下发，本地放行 ≠ 服务端给数据，未购买皮肤的实际行为尚未确认。
 - **易校园拦 shell 的副作用**：App 自带的网速探测会失败；易校园自己的设备指纹持久化不在本模块范围内。
 - **JMComic3 会以你自己的账号发少量请求**：签到（读日历 → 提交 → 回读，最多 4 个请求，必要时重试一次）与一次有界的启动期状态采样（每 3 秒一次、最多 100 次，约 5 分钟后自停）。
 - **有被服务端风控识别的可能**：改客户端行为总有这个风险，请自行评估。
@@ -104,9 +107,9 @@ bash module/test/run.sh
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.1.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-官方模块仓库的 Release 标题使用 `2.1`，标签使用 `3-2.1`，随 Release 上传 APK 并填写更新说明。
+官方模块仓库的 Release 标题使用 `2.1.1`，标签使用 `4-2.1.1`，随 Release 上传 APK 并填写更新说明。
 
 ## 📜 许可证
 

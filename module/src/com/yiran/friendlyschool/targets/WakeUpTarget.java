@@ -27,6 +27,8 @@ import java.lang.reflect.Field;
  * WakeUp课程表 (com.suda.yzune.wakeupschedule) 净化模块。
  *
  * 设计原则：只关掉 App 自己的“要不要展示”决策，不替换数据、不伪造账号状态、不碰 SDK 内部。
+ * 唯一例外是下方的 V 组：本地把会员判断放行（夜间模式、简洁模式、皮肤预览在 6.5.0 里都是
+ * 会员功能，不放行就没法用）。放行只作用于**本地展示与本地偏好**，服务端账号字段一律不修改。
  * 每一处 hook 的调用方都已在样本 6.5.0 (versionCode 540) 上静态确认过：
  *
  *   E1 aaa.utils.OooOOOO.OooO0OO()Z   ← 仅被 SplashActivity 调用          → 开屏广告
@@ -44,6 +46,11 @@ import java.lang.reflect.Field;
  *   L6 ScheduleFragment.oo0O()                                            → 把简洁模式右上角的“我的”图标也隐掉
  *   L7 settings.ScheduleNotifyActivity                                    → 隐掉“普通提醒”（实为推送提醒 pushNotifyLayout，需登录）
  *   L8 widget.MainAiTitleTabView$OooO0OO.onApplyWindowInsets              → 把底栏调高（高度由这个 insets 监听器写死为 44dp+inset）
+ *   V1 aaa.utils.o00O0000.OooOOO0()Z   （isVip，21 个调用点）            → 本地解锁会员门禁
+ *   V2 utils.ScheduleSpUtils.OooO0Oo()Z （isDarkModel 读）               → 改读本地键（原键带 uid，未登录存不下来）
+ *   V3 utils.ScheduleSpUtils.OooO0oo(I)V（dark_model 写）               → 改写本地键
+ *   V4 utils.ScheduleSpUtils.OooO0o()Z  （isSimpleModel 读）             → 改读本地键
+ *   V5 utils.ScheduleSpUtils.OooO(Z)V   （simple_model 写）              → 改写本地键
  *
  * 明确不做的三件事，以及原因：
  *   - 不改 UserInfo.vipStatus / vipEndTime / isPermanentVip。这些字段来自服务端
@@ -53,6 +60,9 @@ import java.lang.reflect.Field;
  *   - 不改 ShowLoginAction 的返回值。它给 H5 回的是 success 标志，回成功等于对 H5 诈称已登录，
  *     回失败语义不明；而会调它的那几个 H5 页（学习/AI/会员/课程）已经被 E6 拦掉了。
  *     这里只在 Activity 层拦住登录页本身，对调用方不做任何欺骗。
+ *
+ * V 组（V1）与上面第 1、2 条的关系：V1 只让“本地会员判断”返回真，不改 UserInfo 里的任何字段，
+ * 也不让 isLogin 返回真 —— 服务端是否下发数据仍由服务端决定，本地不替它做决定。
  *
  * 免登录的代价（必须知道）：不上作业帮账号 = 课表只存在本机。卸载、清数据、换设备都拿不回来，
  * 云同步用不了。课表本身的导入/增删课/提醒/小组件不依赖登录（已确认 SplashActivity 与
@@ -186,6 +196,42 @@ public class WakeUpTarget extends SchoolTargetBase {
     private static final String TOAST_MEMBER_TEXT = "该功能已移除";
 
     /**
+     * V组：本地解锁外观功能（夜间模式 / 简洁模式 / 皮肤预览）。
+     *
+     * 这三样在 6.5.0 里都挂在同一个门禁后面：aaa.utils.o00O0000.OooOOO0()（isVip）。
+     * 未登录时它恒为 false，于是：
+     *   - ScheduleFragment.o00ooo0()（夜间开关）：未登录分支读的是“dark_model_<uid>”SP 键
+     *     （未登录恒 false），而不是当前会话状态，所以日间→夜间能进、夜间→日间永远切不回来；
+     *   - ScheduleFragment.oo0o0O0()（onResume 持久化）/ o00O0OO()（简洁模式保存）：
+     *     未登录时不写 SP 还把会话状态清零，所以夜间/简洁一退出 App 就打回原形；
+     *   - MainStyleFragment.o0Oo0oo()（返回键拦截）：预览皮肤后未登录会弹“开通VIP”
+     *     CommonDialog，而它的“取消”回调才是清预览标志的出口 —— 该弹窗已被 L3 按文案拦掉，
+     *     回调永远不执行，返回键被永久吃掉（皮肤设置页卡死的直接原因）。
+     *
+     * V1 把门禁本身放行：上面三处的登录分支会自然走通（模式切换、退出重进保持、
+     * 皮肤返回不再卡死），比逐个改 UI 方法稳 —— 那样要同时对抗 21 个调用点里的每一个分支。
+     *
+     * V2–V5 是配套：夜间/简洁的持久化键是“dark_model_<uid>”“simple_model_<uid>”，
+     * uid 取自登录信息，未登录为 null，App 自己的读写会直接跳过。把 ScheduleSpUtils 的
+     * 四个读写方法重定向到模块自有键（fs_ 后缀、独立 SP 文件），未登录也能记住状态；
+     * 将来登录真实账号也不会和真实 uid 键冲突。
+     *
+     * 边界（必须知道）：
+     *   - 账号字段未修改：V1 只影响本地判断，UserInfo.vipStatus / vipEndTime / uid 保持服务端原值。
+     *   - 存储语义：夜间/简洁存放在当前安装的目标 App 数据内（模块自有键 fs_wakeup_prefs），
+     *     **不随账号切换**；新键不存在时按当前账号的原方法值初始化，已存在则以本地值为准
+     *     （用户显式保存的 false 也以本地为准，不会被当成“尚未迁移”）；不覆盖 App 的账号键；
+     *     清除目标 App 数据或卸载后本地设置丢失。
+     *   - 付费皮肤：样式数据与权限仍受服务端限制，未购买皮肤的实际行为**待真机验证**。
+     */
+    private static final boolean UNLOCK_APPEARANCE = true;
+
+    /** 模块自有 SP 文件与键：与 App 自己的“<功能>_<uid>”键空间隔离。 */
+    private static final String FS_PREFS_FILE = "fs_wakeup_prefs";
+    private static final String FS_KEY_DARK = "dark_model_fs_local";
+    private static final String FS_KEY_SIMPLE = "simple_model_fs_local";
+
+    /**
      * 保留清单——写在这里是为了让“别拦什么”变成可审查的代码，而不是注释里的口头承诺。
      * 小组件设置、学校/年级设置、协议与政策页、权限中心都是课表流程的一部分。
      */
@@ -298,6 +344,11 @@ public class WakeUpTarget extends SchoolTargetBase {
         // L3 会员/登录提示弹窗
         if (SUPPRESS_MEMBER_PROMPTS) {
             installPromptSuppressor(cl);
+        }
+
+        // V组：本地解锁外观功能（夜间/简洁/皮肤）
+        if (UNLOCK_APPEARANCE) {
+            installAppearanceUnlock(cl);
         }
 
         // L6 简洁模式右上角的“我的”图标
@@ -983,6 +1034,246 @@ public class WakeUpTarget extends SchoolTargetBase {
         }
         return false;
     }
+
+    // ------------------------------------------- V组：本地解锁外观功能
+
+    /**
+     * V组安装：先把 V1–V5 的方法**全部查齐**，再装；任何一项查不到就一条都不装。
+     *
+     * 为什么必须先查齐：V2/V4 是“读本地键”、V3/V5 是“写本地键”、V1 是门禁。只装上其中一半
+     * （例如读接管了、写没装）就会停在“读数取自本地、写数落回账号键”的不配对状态，而且日志上
+     * 完全看不出来 —— 这正是本轮修掉的缺陷。
+     *
+     * 安装顺序：存储读写（V2–V5）在前，V1 在后。V1 一旦生效，夜间/简洁/皮肤会立刻走“已登录”
+     * 分支；此时若存储接管没装上，切换结果就写进没人读的账号键。任一步抛错则撤销本组本次已装的
+     * 全部 hook 并逐条记录；其他广告/界面 hook 不受影响。
+     */
+    private void installAppearanceUnlock(ClassLoader cl) {
+        final java.lang.reflect.Method mIsVip;
+        final java.lang.reflect.Method mReadDark;
+        final java.lang.reflect.Method mWriteDark;
+        final java.lang.reflect.Method mReadSimple;
+        final java.lang.reflect.Method mWriteSimple;
+        try {
+            Class<?> vipCls = Xp.findClass(APP + "aaa.utils.o00O0000", cl);
+            Class<?> spuCls = Xp.findClass(APP + "utils.ScheduleSpUtils", cl);
+            mIsVip = Xp.findMethod(vipCls, "OooOOO0");
+            mReadDark = Xp.findMethod(spuCls, "OooO0Oo");
+            mWriteDark = Xp.findMethod(spuCls, "OooO0oo", int.class);
+            mReadSimple = Xp.findMethod(spuCls, "OooO0o");
+            mWriteSimple = Xp.findMethod(spuCls, "OooO", boolean.class);
+        } catch (Throwable t) {
+            log("V组未安装：查方法失败，一条都不装（保持原逻辑）: " + t);
+            return;
+        }
+        StringBuilder missing = new StringBuilder();
+        if (mIsVip == null) {
+            missing.append(" o00O0000#OooOOO0");
+        }
+        if (mReadDark == null) {
+            missing.append(" ScheduleSpUtils#OooO0Oo");
+        }
+        if (mWriteDark == null) {
+            missing.append(" ScheduleSpUtils#OooO0oo(int)");
+        }
+        if (mReadSimple == null) {
+            missing.append(" ScheduleSpUtils#OooO0o");
+        }
+        if (mWriteSimple == null) {
+            missing.append(" ScheduleSpUtils#OooO(boolean)");
+        }
+        if (missing.length() > 0) {
+            log("V组未安装：缺少" + missing + "，一条都不装（保持原逻辑）");
+            return;
+        }
+
+        final java.util.List<io.github.libxposed.api.XposedInterface.HookHandle> installed =
+                new java.util.ArrayList<io.github.libxposed.api.XposedInterface.HookHandle>();
+        try {
+            // V2 夜间读：本地键在 → 用本地值；不在 → 取原方法（账号）值并落盘迁移
+            installed.add(Xp.hook(mReadDark, chain -> {
+                android.content.SharedPreferences prefs = localPrefs();
+                if (prefs == null) {
+                    logOnce("V2 偏好不可用，读退回原逻辑");
+                    return chain.proceed();
+                }
+                boolean has;
+                int local = 0;
+                try {
+                    has = prefs.contains(FS_KEY_DARK);
+                    if (has) {
+                        local = prefs.getInt(FS_KEY_DARK, 0);
+                    }
+                } catch (Throwable t) {
+                    logOnce("V2 读取失败，退回原逻辑: " + t);
+                    return chain.proceed();
+                }
+                int account = has ? 0 : ((Boolean) chain.proceed() ? 1 : 0);
+                int value = resolveLocalInt(has, local, account);
+                if (!has && !putInt(prefs, FS_KEY_DARK, value)) {
+                    logOnce("V2 旧账号值迁移写入失败，下次读取重试");
+                }
+                logOnce("V2 hit: isDarkModel -> " + (value == 1) + (has ? "" : "（迁移自账号值）"));
+                return value == 1;
+            }));
+
+            // V3 夜间写：只写本地键，不碰账号键
+            installed.add(Xp.hook(mWriteDark, chain -> {
+                int v = (Integer) chain.getArg(0);
+                android.content.SharedPreferences prefs = localPrefs();
+                if (prefs == null || !putInt(prefs, FS_KEY_DARK, v)) {
+                    logOnce("V3 写入失败，写退回原逻辑（未登录用户可能无法保存）");
+                    return chain.proceed();
+                }
+                logOnce("V3 hit: dark_model -> " + v);
+                return null;
+            }));
+
+            // V4 简洁读：同 V2
+            installed.add(Xp.hook(mReadSimple, chain -> {
+                android.content.SharedPreferences prefs = localPrefs();
+                if (prefs == null) {
+                    logOnce("V4 偏好不可用，读退回原逻辑");
+                    return chain.proceed();
+                }
+                boolean has;
+                boolean local = false;
+                try {
+                    has = prefs.contains(FS_KEY_SIMPLE);
+                    if (has) {
+                        local = prefs.getBoolean(FS_KEY_SIMPLE, false);
+                    }
+                } catch (Throwable t) {
+                    logOnce("V4 读取失败，退回原逻辑: " + t);
+                    return chain.proceed();
+                }
+                boolean account = has ? false : (Boolean) chain.proceed();
+                boolean value = resolveLocalBool(has, local, account);
+                if (!has && !putBool(prefs, FS_KEY_SIMPLE, value)) {
+                    logOnce("V4 旧账号值迁移写入失败，下次读取重试");
+                }
+                logOnce("V4 hit: isSimpleModel -> " + value + (has ? "" : "（迁移自账号值）"));
+                return value;
+            }));
+
+            // V5 简洁写：同 V3
+            installed.add(Xp.hook(mWriteSimple, chain -> {
+                boolean v = (Boolean) chain.getArg(0);
+                android.content.SharedPreferences prefs = localPrefs();
+                if (prefs == null || !putBool(prefs, FS_KEY_SIMPLE, v)) {
+                    logOnce("V5 写入失败，写退回原逻辑（未登录用户可能无法保存）");
+                    return chain.proceed();
+                }
+                logOnce("V5 hit: simple_model -> " + v);
+                return null;
+            }));
+            log("hook installed: V2-V5 ScheduleSpUtils 夜间/简洁读写 -> 本地键");
+
+            // V1 最后装：本地放行会员判断
+            installed.add(Xp.hook(mIsVip, chain -> {
+                logOnce("V1 hit: isVip -> true");
+                return Boolean.TRUE;
+            }));
+            log("hook installed: V1 会员门禁 o00O0000#OooOOO0 -> true");
+        } catch (Throwable t) {
+            log("V组安装失败，撤销本次已装的 " + installed.size() + " 条: " + t);
+            for (int i = installed.size() - 1; i >= 0; i--) {
+                // 撤销只解绑 ART 上的 hook；Xp 的句柄登记表仍留这条死句柄，
+                // 热重载时再 unhook 一次是幂等的（FakeFramework 与 libxposed 均忽略）。
+                try {
+                    installed.get(i).unhook();
+                    log("V组已撤销第 " + (i + 1) + " 条");
+                } catch (Throwable u) {
+                    log("V组撤消失败: " + u);
+                }
+            }
+        }
+    }
+
+    /**
+     * 拿 Application Context（ActivityThread.currentApplication()，boot classloader 反射，
+     * 不碰目标 App 类）。拿不到返回 null —— 调用方必须退回原方法并出声，不得静默降级。
+     */
+    private static android.content.Context appContext() {
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread", false, null);
+            java.lang.reflect.Method current = at.getDeclaredMethod("currentApplication");
+            current.setAccessible(true);
+            Object app = current.invoke(null);
+            return app instanceof android.content.Context ? (android.content.Context) app : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 模块自有的偏好对象：成功取得后缓存，失败一律返回 null 让调用方退回原方法。
+     * **不缓存失败** —— 拿不到 Application Context 的时机是暂时的，下次调用要能重试。
+     */
+    private android.content.SharedPreferences localPrefs() {
+        android.content.SharedPreferences cached = localPrefs;
+        if (cached != null) {
+            return cached;
+        }
+        android.content.Context c = appContext();
+        if (c == null) {
+            logOnce("V组：拿不到 Application Context，偏好读写退回原方法（未登录用户可能无法保存）");
+            return null;
+        }
+        try {
+            android.content.SharedPreferences p =
+                    c.getSharedPreferences(FS_PREFS_FILE, Context.MODE_PRIVATE);
+            if (p == null) {
+                logOnce("V组：getSharedPreferences 返回 null，偏好读写退回原方法");
+                return null;
+            }
+            localPrefs = p;
+            return p;
+        } catch (Throwable t) {
+            logOnce("V组：偏好获取失败，退回原方法: " + t);
+            return null;
+        }
+    }
+
+    /** 写 int；失败返回 false，调用方据此退回原方法（不许“记录了命中却把写入丢掉”）。 */
+    private boolean putInt(android.content.SharedPreferences prefs, String key, int value) {
+        try {
+            prefs.edit().putInt(key, value).apply();
+            return true;
+        } catch (Throwable t) {
+            logOnce("V组：写 int 失败（" + key + "）: " + t);
+            return false;
+        }
+    }
+
+    /** 写 boolean；失败返回 false，语义同 putInt。 */
+    private boolean putBool(android.content.SharedPreferences prefs, String key, boolean value) {
+        try {
+            prefs.edit().putBoolean(key, value).apply();
+            return true;
+        } catch (Throwable t) {
+            logOnce("V组：写 boolean 失败（" + key + "）: " + t);
+            return false;
+        }
+    }
+
+    /**
+     * 迁移判定（纯函数）：本地键存在就用本地值，不存在才取原方法（账号）值。
+     * 桌面测试用反射直接调这两个方法（TestMain#wakeUpVGroupTests）。
+     *
+     * 存在性只能靠 contains 判定，不能靠值判定 —— 用户明确保存的 false/0 与“从未写过”
+     * 在值上无法区分，把前者当成待迁移会覆盖用户的选择。
+     */
+    private static int resolveLocalInt(boolean hasLocalKey, int localValue, int accountValue) {
+        return hasLocalKey ? localValue : accountValue;
+    }
+
+    private static boolean resolveLocalBool(boolean hasLocalKey, boolean localValue, boolean accountValue) {
+        return hasLocalKey ? localValue : accountValue;
+    }
+
+    /** 只在成功取得后赋值；失败保持 null 以便下次重试。 */
+    private volatile android.content.SharedPreferences localPrefs;
 
     // ------------------------------------------- 第二阶段：剪标签（由 TRIM_LEARN_TABS 控制，当前启用）
 

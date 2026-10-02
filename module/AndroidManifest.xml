@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.shitianyaa.friendlyschool"
-    android:versionCode="3"
-    android:versionName="2.1">
+    android:versionCode="4"
+    android:versionName="2.1.1">
 
     <!-- minSdk 26：libxposed 的 api aar 自己声明了 minSdkVersion=26（实测 aapt2 dump 于
          api-102.0.0.aar 的 AndroidManifest.xml）。targetSdk 保持 28 不变。 -->
@@ -14,6 +14,8 @@
          少了那三件套会表现为"装了但静默不生效"，所以构建脚本会断言它们确实在 APK 根目录里。 -->
     <application
         android:label="FriendlySchool"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:description="@string/module_desc"
         android:hasCode="true" />
 </manifest>

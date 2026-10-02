@@ -10,10 +10,12 @@ import com.yiran.friendlyschool.core.SchoolTargetBase;
 import com.yiran.friendlyschool.core.Targets;
 import com.yiran.friendlyschool.core.Xp;
 import com.yiran.friendlyschool.targets.YiCampusTarget;
+import com.yiran.friendlyschool.targets.WakeUpTarget;
 import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam;
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam;
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam;
 import io.github.libxposed.api.XposedInterface;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.HashMap;
@@ -48,6 +50,7 @@ public final class TestMain {
         baseHelperTests();
         entryTests();
         assetDefenseTests();
+        wakeUpVGroupTests();
         System.out.println();
         System.out.println(failed == 0
                 ? "ALL TESTS PASSED (" + passed + ")"
@@ -615,6 +618,133 @@ public final class TestMain {
     }
 
     /** 真实的 XposedModule 子类：用 attachFramework 把假框架接上去，用来验证 Xp 工具层。 */
+    /**
+     * WakeUp V组（本地解锁外观功能）的桌面验证范围：
+     *   - 可验：五条 hook 的成组安装与安装顺序（存储在先、V1 在后）、安装中途失败后的整体回滚
+     *     （不残留 hook、V1 不生效）、偏好在取失败时退回原方法并出声、迁移判定，
+     *     以及内存偏好下实际夜间读取 hook 的迁移与本地值优先；
+     *   - 不可验：真实 SharedPreferences 的读写与跟进程持久化（桌面没有 Application Context），
+     *     以及真机上 isVip / UserInfo 的实际取值 —— 这两条由真机日志核实。
+     */
+    private static void wakeUpVGroupTests() throws Throwable {
+        System.out.println();
+        System.out.println("[WakeUp] V组：成组安装、回滚与迁移判定");
+        ClassLoader cl = TestMain.class.getClassLoader();
+        Method install = WakeUpTarget.class.getDeclaredMethod("installAppearanceUnlock", ClassLoader.class);
+        install.setAccessible(true);
+
+        Class<?> vipCls = Class.forName("com.suda.yzune.wakeupschedule.aaa.utils.o00O0000", false, cl);
+        Method isVip = vipCls.getDeclaredMethod("OooOOO0");
+        Class<?> spuCls = Class.forName("com.suda.yzune.wakeupschedule.utils.ScheduleSpUtils", false, cl);
+        Constructor<?> spuCtor = spuCls.getDeclaredConstructor();
+        spuCtor.setAccessible(true);
+        Method readDark = spuCls.getDeclaredMethod("OooO0Oo");
+        Method writeSimple = spuCls.getDeclaredMethod("OooO", boolean.class);
+
+        // 1) 正常路径：五条全装，且 V1 在存储读写之后
+        FakeFramework ff = new FakeFramework();
+        TestModule tm = new TestModule();
+        tm.attachFramework(ff, new Runnable() {
+            @Override
+            public void run() {
+            }
+        });
+        Xp.bind(tm);
+        Xp.unhookAll();
+        WakeUpTarget target = new WakeUpTarget();
+        install.invoke(target, cl);
+        check("V组：正常路径装五条 hook", ff.hookCount() == 5);
+        String text = String.join("\n", ff.logs());
+        int storageAt = text.indexOf("hook installed: V2-V5");
+        int vipAt = text.indexOf("hook installed: V1");
+        check("V组：安装顺序为存储读写在前、V1 在后", storageAt >= 0 && vipAt > storageAt);
+        check("V组：V1 生效后 isVip -> true", Boolean.TRUE.equals(ff.invoke(isVip, null)));
+
+        // 2) 桌面必然拿不到 Application Context：读写必须退回原方法并出声
+        Object spu = spuCtor.newInstance();
+        check("V组：偏好在取失败时读退回原方法", Boolean.FALSE.equals(ff.invoke(readDark, spu)));
+        Object afterWrite = ff.invoke(writeSimple, spu, true);
+        check("V组：偏好在取失败时写退回原方法", afterWrite == null
+                && Boolean.TRUE.equals(ff.invoke(spuCls.getDeclaredMethod("OooO0o"), spu)));
+        check("V组：退回原逻辑必须出声（可诊断）",
+                ff.loggedContains("偏好读写退回原方法"));
+
+        // 注入可用偏好，执行实际读取 hook，覆盖 boolean 原结果到 int 存储值的迁移。
+        Map<String, Integer> stored = new HashMap<String, Integer>();
+        android.content.SharedPreferences.Editor editor =
+                (android.content.SharedPreferences.Editor) java.lang.reflect.Proxy.newProxyInstance(
+                        cl, new Class<?>[] { android.content.SharedPreferences.Editor.class }, (proxy, method, args) -> {
+                            if (method.getName().equals("putInt")) {
+                                stored.put((String) args[0], (Integer) args[1]);
+                                return proxy;
+                            }
+                            if (method.getName().equals("apply")) {
+                                return null;
+                            }
+                            throw new UnsupportedOperationException(method.getName());
+                        });
+        android.content.SharedPreferences prefs =
+                (android.content.SharedPreferences) java.lang.reflect.Proxy.newProxyInstance(
+                        cl, new Class<?>[] { android.content.SharedPreferences.class }, (proxy, method, args) -> {
+                            switch (method.getName()) {
+                                case "contains": return stored.containsKey(args[0]);
+                                case "getInt": return stored.getOrDefault(args[0], (Integer) args[1]);
+                                case "edit": return editor;
+                                default: throw new UnsupportedOperationException(method.getName());
+                            }
+                        });
+        java.lang.reflect.Field prefsField = WakeUpTarget.class.getDeclaredField("localPrefs");
+        prefsField.setAccessible(true);
+        prefsField.set(target, prefs);
+        Method writeDark = spuCls.getDeclaredMethod("OooO0oo", int.class);
+        writeDark.setAccessible(true);
+        for (boolean accountDark : new boolean[] { false, true }) {
+            stored.clear();
+            writeDark.invoke(spu, accountDark ? 1 : 0);
+            Object migrated = ff.invoke(readDark, spu);
+            check("V2实际迁移：账号 " + accountDark + " 转为本地 0/1 并保存",
+                    Boolean.valueOf(accountDark).equals(migrated)
+                            && Integer.valueOf(accountDark ? 1 : 0).equals(stored.get("dark_model_fs_local")));
+            writeDark.invoke(spu, accountDark ? 0 : 1);
+            check("V2实际读取：本地 " + accountDark + " 不被账号相反值覆盖",
+                    Boolean.valueOf(accountDark).equals(ff.invoke(readDark, spu)));
+        }
+        Xp.unhookAll();
+
+        // 3) 安装中途失败：整体回滚，不残留 hook，V1 不生效
+        FakeFramework ff2 = new FakeFramework();
+        TestModule tm2 = new TestModule();
+        tm2.attachFramework(ff2, new Runnable() {
+            @Override
+            public void run() {
+            }
+        });
+        Xp.bind(tm2);
+        Xp.unhookAll();
+        ff2.failHookAfter(2);
+        install.invoke(new WakeUpTarget(), cl);
+        check("V组：安装中途失败后无残留 hook", ff2.hookCount() == 0);
+        check("V组：失败与撤销都记录在日志里",
+                ff2.loggedContains("V组安装失败") && ff2.loggedContains("V组已撤销"));
+        check("V组：安装失败不得留下“已放行会员判断”", Boolean.FALSE.equals(ff2.invoke(isVip, null)));
+        Xp.unhookAll();
+
+        // 4) 迁移判定（纯函数）
+        Method rInt = WakeUpTarget.class.getDeclaredMethod(
+                "resolveLocalInt", boolean.class, int.class, int.class);
+        rInt.setAccessible(true);
+        Method rBool = WakeUpTarget.class.getDeclaredMethod(
+                "resolveLocalBool", boolean.class, boolean.class, boolean.class);
+        rBool.setAccessible(true);
+        check("V组迁移：本地键缺失时取账号原值",
+                ((Integer) rInt.invoke(null, false, 0, 1)) == 1);
+        check("V组迁移：本地键已存在时以本地值为准（显式 false 不被账号值覆盖）",
+                ((Integer) rInt.invoke(null, true, 0, 1)) == 0);
+        check("V组迁移：简洁模式同判定（缺失取账号 true / 已存在保本地 false）",
+                ((Boolean) rBool.invoke(null, false, false, true))
+                        && !((Boolean) rBool.invoke(null, true, false, true)));
+    }
+
     public static class TestModule extends io.github.libxposed.api.XposedModule {
     }
 
