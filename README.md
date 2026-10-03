@@ -13,6 +13,7 @@
 <!-- 本仓为源码仓；安装包由官方模块收录仓分发，故徽章指向该仓 -->
 [![Release](https://img.shields.io/github/v/release/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool?style=flat-square&color=E87DA6&logo=github&logoColor=white)](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/total?style=flat-square&color=orange&logo=github&logoColor=white&label=Downloads)](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases)
+[![Telegram Channel](https://img.shields.io/badge/Telegram-Channel-2CA5E0?style=flat-square&logo=telegram&logoColor=white)](https://t.me/FriendlySchoolRelease)
 
 </div>
 
@@ -86,6 +87,12 @@
 - **易校园拦 shell 的副作用**：App 自带的网速探测会失败；易校园自己的设备指纹持久化不在本模块范围内。
 - **JMComic3 会以你自己的账号发少量请求**：签到（读日历 → 提交 → 回读，最多 4 个请求，必要时重试一次）与一次有界的启动期状态采样（每 3 秒一次、最多 100 次，约 5 分钟后自停）。
 - **有被服务端风控识别的可能**：改客户端行为总有这个风险，请自行评估。
+
+## 💬 反馈与交流
+
+- **Telegram 频道**：欢迎加入 [FriendlySchool Release 频道](https://t.me/FriendlySchoolRelease) 交流玩耍，获取第一手更新与发布资讯！
+- **问题反馈**：如果在日常使用中遇到 Bug 或异常，欢迎提交 [Issue](https://github.com/shitianyaa/FriendlySchool/issues)；
+- **新应用适配**：如果有想要支持或净化的校园 / 常用 App，非常欢迎提交 [Issue](https://github.com/shitianyaa/FriendlySchool/issues) 并附上应用名称、版本及相关功能诉求！
 
 ## 从源码构建
 
