@@ -10,10 +10,9 @@
 [![Android](https://img.shields.io/badge/Android-8.0%2B-brightgreen?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/about/versions)
 [![libxposed API](https://img.shields.io/badge/libxposed_API-102-blueviolet?style=flat-square&logo=openjdk&logoColor=white)](https://github.com/libxposed/api)
 
-<!-- 动态徽章：公开仓建好且发出首个 Release 后再取消注释（在此之前 shields.io 只会显示 repo not found / no releases）
-[![Release](https://img.shields.io/github/v/release/shitianyaa/FriendlySchool?style=flat-square&color=green&logo=github&logoColor=white)](https://github.com/shitianyaa/FriendlySchool/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/shitianyaa/FriendlySchool/total?style=flat-square&color=orange&logo=github&logoColor=white&label=Downloads)](https://github.com/shitianyaa/FriendlySchool/releases)
--->
+<!-- 本仓为源码仓；安装包由官方模块收录仓分发，故徽章指向该仓 -->
+[![Release](https://img.shields.io/github/v/release/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool?style=flat-square&color=E87DA6&logo=github&logoColor=white)](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/total?style=flat-square&color=orange&logo=github&logoColor=white&label=Downloads)](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases)
 
 </div>
 
@@ -27,7 +26,7 @@
 做法上以**拦出口**为主：被拦的广告接口返回「该广告位已关闭」这类成功空响应，让 App 走它自己既有的正常分支，
 而不是把请求打断、把状态机掐死。
 
-**安装**：装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（三个目标已在模块里声明，通常无需手动挑选）。
+**安装**：[下载 APK](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)（本仓只维护源码，安装包由官方模块收录仓分发）→ 装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（三个目标已在模块里声明，通常无需手动挑选）。
 
 ## 兼容与版本
 
@@ -90,7 +89,7 @@
 
 ## 从源码构建
 
-源码仓库：[shitianyaa/FriendlySchool](https://github.com/shitianyaa/FriendlySchool)。官方模块收录仓用于说明与 APK Release，源码在个人仓库维护。
+源码仓库：[shitianyaa/FriendlySchool](https://github.com/shitianyaa/FriendlySchool)。官方模块收录仓 [Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool) 用于说明与 APK Release，源码在个人仓库维护。
 
 构建不依赖 Gradle，使用 Windows 上的 JDK 17 或以上、Android SDK Build Tools 34.0.0 与 Android 34 平台。脚本默认路径为 `D:\JAVA\bin`、`D:\AndroidSDK\build-tools\34.0.0` 和 `D:\AndroidSDK\platforms\android-34\android.jar`；可用 `JDK_W`、`BT_W`、`AJ_W` 环境变量覆盖。
 
