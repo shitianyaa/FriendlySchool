@@ -188,6 +188,35 @@ public final class Xp {
         }
     }
 
+    /**
+     * 读实例字段（含父类链）；读不到时出声并返回 null。
+     *
+     * 用途：有些第三方/引擎类把成员暴露为 **public 字段而不是 getter**
+     * （例：Flutter 引擎的 `MethodCall` 只有 `public final String method` 字段，
+     * 没有任何 getter）。习惯性写 `getClass().getMethod("method")` 会抛
+     * `NoSuchMethodException`，被调用方的 catch 吃掉后表现为“拦截装了但从不命中”
+     * ——即项目最忌讳的静默失效。
+     */
+    public static Object getObjectField(Object thisObject, String name) {
+        if (thisObject == null || name == null) {
+            return null;
+        }
+        for (Class<?> c = thisObject.getClass(); c != null; c = c.getSuperclass()) {
+            try {
+                Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                return f.get(thisObject);
+            } catch (NoSuchFieldException ignored) {
+                // 继续往父类找
+            } catch (Throwable t) {
+                log("field FAILED: " + thisObject.getClass().getName() + "#" + name + " : " + t);
+                return null;
+            }
+        }
+        log("field MISSING: " + thisObject.getClass().getName() + "#" + name);
+        return null;
+    }
+
     /** 读静态字段；字段不存在时出声并返回 null（调用点多半在拦截链路里，不能抛）。 */
     public static Object getStaticObjectField(Class<?> cls, String name) {
         if (cls == null || name == null) {

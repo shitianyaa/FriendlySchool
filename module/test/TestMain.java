@@ -461,12 +461,13 @@ public final class TestMain {
         System.out.println();
         System.out.println("[入口] 路由与静默");
 
-        check("路由表：三个目标都认",
+        check("路由表：四个目标都认",
                 Targets.forPackage("cn.com.yunma.school.app") != null
                         && Targets.forPackage("com.suda.yzune.wakeupschedule") != null
                         && "易校园".equals(Targets.forPackage("cn.com.yunma.school.app").shortName())
                         && "WakeUp课程表".equals(Targets.forPackage("com.suda.yzune.wakeupschedule").shortName())
-                        && "JMComic3".equals(Targets.forPackage("com.a7m3p9xv.t6qk2z8.app").shortName()));
+                        && "JMComic3".equals(Targets.forPackage("com.a7m3p9xv.t6qk2z8.app").shortName())
+                        && "光影边框".equals(Targets.forPackage("com.dengziwl.bk").shortName()));
         check("路由表：非目标包返回 null",
                 Targets.forPackage("com.example.other") == null
                         && Targets.forPackage(null) == null);
@@ -592,6 +593,9 @@ public final class TestMain {
             throw new IllegalStateException("original failure");
         }
         public static final String STATIC = "S";
+
+        /** 供 Xp.getObjectField 测试的实例字段（父类侧）。 */
+        public String parentField = "P";
 
         public int value() {
             return 1;
@@ -786,6 +790,18 @@ public final class TestMain {
         check("findClass 未命中抛 ClassNotFoundException", threw);
 
         check("findMethod 沿父类链找", Xp.findMethod(Child.class, "parentMethod") != null);
+
+        // getObjectField：读实例字段（含父类链）。
+        // 回归背景：有些类把成员暴露为 public 字段而非 getter（如 Flutter 的 MethodCall.method），
+        // 用 getMethod() 读它会抛异常并被吞掉，表现为“拦截装了但从不命中”。
+        ff.clearLogs();
+        Sample s = new Child();
+        check("getObjectField 沿父类链读实例字段", "P".equals(Xp.getObjectField(s, "parentField")));
+        check("getObjectField 读取成功时不出声", !ff.loggedContains("field MISSING"));
+        ff.clearLogs();
+        check("getObjectField 未命中返回 null", Xp.getObjectField(s, "noSuchField") == null);
+        check("getObjectField 未命中必须出声", ff.loggedContains("field MISSING"));
+        check("getObjectField null 入参不抛", Xp.getObjectField(null, "any") == null);
         check("findMethod 未命中返回 null", Xp.findMethod(Child.class, "noSuchMethod") == null);
         check("findMethod 用签名区分重载",
                 Xp.findMethod(Child.class, "over", String.class) != null

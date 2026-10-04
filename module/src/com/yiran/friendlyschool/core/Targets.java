@@ -1,5 +1,6 @@
 package com.yiran.friendlyschool.core;
 
+import com.yiran.friendlyschool.targets.GybkTarget;
 import com.yiran.friendlyschool.targets.JMComicTarget;
 import com.yiran.friendlyschool.targets.WakeUpTarget;
 import com.yiran.friendlyschool.targets.YiCampusTarget;
@@ -14,6 +15,7 @@ public final class Targets {
             new YiCampusTarget(),
             new WakeUpTarget(),
             new JMComicTarget(),
+            new GybkTarget(),
     };
 
     private Targets() {
