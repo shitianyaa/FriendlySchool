@@ -24,7 +24,7 @@ OUT="$MOD/build"
 
 # 交付目录：本目录自带的 dist/（可用环境变量 APPDIR 覆盖）
 APPDIR="${APPDIR:-$ROOT/dist}"
-APK_NAME="FriendlySchool-LSPosed-v2.2.apk"
+APK_NAME="FriendlySchool-LSPosed-v2.3.apk"
 
 # 工具链（可用环境变量覆盖；本机实际位置见 README「环境事实」）
 BT_W="${BT_W:-D:\\AndroidSDK\\build-tools\\34.0.0}"

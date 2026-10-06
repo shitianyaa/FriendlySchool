@@ -27,12 +27,12 @@
 做法上以**拦出口**为主：被拦的广告接口返回「该广告位已关闭」这类成功空响应，让 App 走它自己既有的正常分支，
 而不是把请求打断、把状态机掐死。
 
-**安装**：[下载 APK](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)（本仓只维护源码，安装包由官方模块收录仓分发）→ 装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（四个目标已在模块里声明，通常无需手动挑选）。
+**安装**：[下载 APK](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)（本仓只维护源码，安装包由官方模块收录仓分发）→ 装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（目标已在模块里声明，通常无需手动挑选）。
 
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.2`（versionCode `5`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3`（versionCode `6`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -45,8 +45,7 @@
 | WakeUp 课程表 | 6.5.0（versionCode 540） |
 | JMComic3 | 2.1.9 |
 | 光影边框 | 3.4.5（versionCode 34500） |
-
-本次同时修复易校园主动拒绝异常被框架保护模式吞掉的问题：Shell / ProcessBuilder / AssetShield 的拒绝 Hook 使用 `PASSTHROUGH`，其他 Hook 继续使用保护模式。
+| 酷安 | 16.6.4（versionCode 2609291） |
 
 ## ✨ 支持的应用
 
@@ -85,11 +84,10 @@
 
 **边界**：应用内「开通会员」入口的文案读的是服务端返回的会员对象（经 Dart 原生网络层），模块只能改本地设置、改不了这处显示，所以该入口仍会显示原样（不影响去广告效果）。
 
-### 当前开发分支：酷安 · `com.coolapk.market`（测试适配，未发布）
+### 酷安 · `com.coolapk.market`
 
-- 测试目标：酷安 16.6.4（versionCode 2609291）。下载链接仍指向已发布的四目标版本。
-- 在列表处理前后过滤 `sponsor` 广告卡片，保留普通帖子与回复。内部广告回调仍可能运行，此适配不代表广告 SDK 已停用。
-- 开屏及其余广告 SDK 链路仍处于观测阶段；尚未承诺完整去广告。信息流、回复列表的广告与留白需要真机核验。
+- **信息流与回复列表去广告**：在列表处理前后过滤 `sponsor` 广告卡片，保留普通帖子与回复；
+- **开屏直达**：开屏广告页（含第三方 SDK 的开屏页）起后立即结束，直接进入主界面，不再停留等广告回调。
 
 ## ⚠️ 已知边界
 
@@ -127,9 +125,9 @@ bash module/test/run.sh
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.2.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-官方模块仓库的 Release 标题使用 `2.2`，标签使用 `5-2.2`，随 Release 上传 APK 并填写更新说明。
+官方模块仓库的 Release 标题使用 `2.3`，标签使用 `6-2.3`，随 Release 上传 APK 并填写更新说明。
 
 ## 📜 许可证
 

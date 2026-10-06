@@ -2,5 +2,5 @@
 <resources>
     <!-- 现代打包下模块的描述走 manifest 的 android:description（android:description 是引用类型，
          必须指向资源，不能写字符串字面量）。模块名走 android:label。 -->
-    <string name="module_desc" translatable="false">去除受支持应用的广告与后台跟踪，隐藏营销入口，保留真实功能（一卡通、充值、余额、付款码）正常可用。支持：易校园、WakeUp课程表、JMComic3、光影边框。</string>
+    <string name="module_desc" translatable="false">去除受支持应用的广告与后台跟踪，隐藏营销入口，保留真实功能（一卡通、充值、余额、付款码）正常可用。支持：易校园、WakeUp课程表、JMComic3、光影边框、酷安。</string>
 </resources>
