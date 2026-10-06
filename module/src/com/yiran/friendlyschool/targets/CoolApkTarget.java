@@ -545,19 +545,21 @@ public class CoolApkTarget extends SchoolTargetBase {
 
     /**
      * 试着把实体的身份打出来：{@code getEntityType()} / {@code getEntityTemplate()}
-     * / {@code getEntityId()} / {@code getTitle()}。
+     * / {@code getEntityId()}。
      *
      * 目的：找「怎么识别一张卡是广告」的判据。酷安的实体卡片靠 entityType/template
      * 区分普通帖子、广告、推荐 —— 而列表里的广告不是 {@code Ads} 本体（实测：
      * 传给 {@code EntityDelayLoadADHelper.ހ} 的是 {@code AutoValue_EntityCard}，
      * entityType 为 “card”），所以必须靠别的属性区分。
+     *
+     * <b>不记录 {@code getTitle()}</b>：它是帖子/回复的用户内容，写进模块日志会被有日志
+     * 读取权限者看到；识别卡片只需 type/template/id，与本条判据无关，故一并省去。
      */
     private static String describeEntity(Object o) {
         StringBuilder sb = new StringBuilder();
         appendProp(sb, o, "getEntityType");
         appendProp(sb, o, "getEntityTemplate");
         appendProp(sb, o, "getEntityId");
-        appendProp(sb, o, "getTitle");
         return sb.length() == 0 ? null : sb.toString();
     }
 
