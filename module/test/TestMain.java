@@ -51,6 +51,7 @@ public final class TestMain {
         entryTests();
         assetDefenseTests();
         wakeUpVGroupTests();
+        coolApkTests();
         System.out.println();
         System.out.println(failed == 0
                 ? "ALL TESTS PASSED (" + passed + ")"
@@ -747,6 +748,136 @@ public final class TestMain {
         check("V组迁移：简洁模式同判定（缺失取账号 true / 已存在保本地 false）",
                 ((Boolean) rBool.invoke(null, false, false, true))
                         && !((Boolean) rBool.invoke(null, true, false, true)));
+    }
+
+    private static void coolApkTests() throws Throwable {
+        System.out.println("[CoolApk] 列表消费前过滤 sponsor");
+        Xp.unhookAll();
+        FakeFramework ff = new FakeFramework();
+        TestModule tm = new TestModule();
+        tm.attachFramework(ff, () -> {});
+        Xp.bind(tm);
+        com.yiran.friendlyschool.targets.CoolApkTarget target =
+                new com.yiran.friendlyschool.targets.CoolApkTarget();
+        Method install = target.getClass().getDeclaredMethod("filterSponsors",
+                ClassLoader.class, String.class, String.class, String.class);
+        install.setAccessible(true);
+        install.invoke(target, TestMain.class.getClassLoader(), "CoolApkFixture", "process", "fixture");
+        install.invoke(target, TestMain.class.getClassLoader(), "CoolApkFixture", "process", "fixture");
+        check("CoolApk：重试不重复安装且只匹配列表签名", Xp.hookCount() == 1);
+        Method process = CoolApkFixture.class.getMethod("process", java.util.List.class, boolean.class);
+        CoolApkFixture fixture = new CoolApkFixture();
+        Object normal = new CoolApkFixture.Entity("feed");
+        Object sponsor = new CoolApkFixture.Entity("sponsorCard");
+        java.util.List<Object> input = java.util.Arrays.asList(normal, sponsor, null);
+        java.util.List<?> result = (java.util.List<?>) ff.invoke(process, fixture, input, false);
+        check("CoolApk：原方法不能登记输入中的 sponsor", fixture.sponsorRegistrations == 0);
+        check("CoolApk：普通实体、null 和顺序保留", result.size() == 2
+                && result.get(0) == normal && result.get(1) == null);
+        check("CoolApk：不修改调用方的原始列表", input.size() == 3 && input.get(1) == sponsor);
+        check("CoolApk：原方法只执行一次", fixture.calls == 1);
+        java.util.List<Object> clean = java.util.Collections.singletonList(normal);
+        check("CoolApk：无广告时保留列表对象身份", ff.invoke(process, fixture, clean, true) == clean);
+        java.util.List<?> empty = (java.util.List<?>) ff.invoke(process, fixture,
+                java.util.Collections.singletonList(sponsor), false);
+        check("CoolApk：全广告列表变为空列表，原方法不登记广告", empty.isEmpty()
+                && fixture.sponsorRegistrations == 0);
+        java.util.List<Object> uppercase = java.util.Collections.singletonList(
+                new CoolApkFixture.Entity("FEED_DETAIL_REPLY_SPONSOR_CARD"));
+        check("CoolApk：大写 sponsor 判据也被过滤",
+                ((java.util.List<?>) ff.invoke(process, fixture, uppercase, false)).isEmpty());
+        fixture.addSponsor = true;
+        java.util.List<?> output = (java.util.List<?>) ff.invoke(process, fixture, clean, false);
+        check("CoolApk：原方法新生成的返回广告也被过滤", output.size() == 1 && output.get(0) == normal);
+        fixture.addSponsor = false;
+        check("CoolApk：不影响无关重载", "plain".equals(ff.invoke(
+                CoolApkFixture.class.getMethod("process", String.class), fixture, "plain")));
+        fixture.fail = true;
+        boolean threw = false;
+        int before = fixture.calls;
+        try {
+            ff.invoke(process, fixture, clean, false);
+        } catch (IllegalStateException expected) {
+            threw = true;
+        }
+        check("CoolApk：原方法异常可见且不重复执行", threw && fixture.calls == before + 1);
+        Xp.unhookAll();
+
+        Method observe = target.getClass().getDeclaredMethod("obs",
+                ClassLoader.class, String.class, String.class, String.class);
+        observe.setAccessible(true);
+        observe.invoke(target, TestMain.class.getClassLoader(), "CoolApkFixture", "observe", "fixture-observe");
+        Method observed = CoolApkFixture.class.getMethod("observe", java.util.List.class);
+        CoolApkFixture.CountingList counting = new CoolApkFixture.CountingList();
+        fixture.fail = false;
+        before = fixture.calls;
+        ff.clearLogs();
+        for (int i = 0; i < 12; i++) {
+            check("CoolApk：观测保留返回列表身份 " + i, ff.invoke(observed, fixture, counting) == counting);
+        }
+        check("CoolApk：额度内摘要读取输入与输出", counting.reads == 24000 && ff.logs().size() == 12);
+        counting.reads = 0;
+        ff.invoke(observed, fixture, counting);
+        check("CoolApk：第13次不生成摘要，仅提示一次上限", counting.reads == 0
+                && ff.logs().size() == 13 && ff.loggedContains("已达 12 条上限"));
+        ff.invoke(observed, fixture, counting);
+        check("CoolApk：额度耗尽后无摘要无新日志，原方法仍执行", counting.reads == 0
+                && ff.logs().size() == 13 && fixture.calls == before + 14);
+        fixture.fail = true;
+        before = fixture.calls;
+        threw = false;
+        try {
+            ff.invoke(observed, fixture, counting);
+        } catch (IllegalStateException expected) {
+            threw = true;
+        }
+        check("CoolApk：额度耗尽后原异常可见且仅执行一次", threw && fixture.calls == before + 1
+                && counting.reads == 0);
+        Xp.unhookAll();
+
+        // 同一份字节码由两个加载器独立定义，模拟加固 App 的同名实体类。
+        String entityName = "CoolApkFixture$Entity";
+        byte[] entityBytes;
+        try (java.io.InputStream stream = TestMain.class.getResourceAsStream("/CoolApkFixture$Entity.class")) {
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                bytes.write(buffer, 0, read);
+            }
+            entityBytes = bytes.toByteArray();
+        }
+        final byte[] classBytes = entityBytes;
+        Class<?>[] entities = new Class<?>[2];
+        for (int i = 0; i < entities.length; i++) {
+            entities[i] = new ClassLoader(TestMain.class.getClassLoader()) {
+                @Override
+                protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                    if (!name.equals(entityName)) {
+                        return super.loadClass(name, resolve);
+                    }
+                    Class<?> type = findLoadedClass(name);
+                    if (type == null) {
+                        type = defineClass(name, classBytes, 0, classBytes.length);
+                    }
+                    if (resolve) {
+                        resolveClass(type);
+                    }
+                    return type;
+                }
+            }.loadClass(entityName);
+        }
+        check("CoolApk：测试实体同名但属于不同 Class", entities[0] != entities[1]
+                && entities[0].getName().equals(entities[1].getName()));
+        Method withoutSponsors = target.getClass().getDeclaredMethod("withoutSponsors", java.util.List.class, String.class);
+        withoutSponsors.setAccessible(true);
+        for (Class<?> entity : entities) {
+            Object ad = entity.getConstructor(String.class).newInstance("sponsorCard");
+            Object feed = entity.getConstructor(String.class).newInstance("feed");
+            java.util.List<?> filtered = (java.util.List<?>) withoutSponsors.invoke(target,
+                    java.util.Arrays.asList(ad, feed), "multiloader");
+            check("CoolApk：各加载器 sponsor 被过滤、普通实体保留", filtered.size() == 1 && filtered.get(0) == feed);
+        }
     }
 
     public static class TestModule extends io.github.libxposed.api.XposedModule {
