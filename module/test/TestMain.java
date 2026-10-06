@@ -878,6 +878,47 @@ public final class TestMain {
                     java.util.Arrays.asList(ad, feed), "multiloader");
             check("CoolApk：各加载器 sponsor 被过滤、普通实体保留", filtered.size() == 1 && filtered.get(0) == feed);
         }
+
+        Method block = target.getClass().getDeclaredMethod("blockActivity",
+                ClassLoader.class, String.class, String.class);
+        block.setAccessible(true);
+        ClassLoader activityLoader = TestMain.class.getClassLoader();
+        block.invoke(target, activityLoader, CoolApkFixture.FirstAdActivity.class.getName(), "first-ad");
+        block.invoke(target, activityLoader, CoolApkFixture.SecondAdActivity.class.getName(), "second-ad");
+        block.invoke(target, activityLoader, CoolApkFixture.FirstAdActivity.class.getName(), "first-ad");
+        check("CoolApk：两个广告类共享父方法，重复安装仍只有一个 Hook", ff.hookCount() == 1);
+        Method create = CoolApkFixture.SharedActivity.class.getDeclaredMethod("onCreate", android.os.Bundle.class);
+        CoolApkFixture.SharedActivity ordinary = CoolApkFixture.activity(CoolApkFixture.NormalActivity.class);
+        ff.clearLogs();
+        ff.invoke(create, ordinary, (Object) null);
+        check("CoolApk：普通兄弟类只运行原方法，不关闭且不报已拦截", ordinary.creates == 1
+                && ordinary.finishes == 0 && !ff.loggedContains("[已拦截]"));
+        for (Class<? extends CoolApkFixture.SharedActivity> type : java.util.Arrays.asList(
+                CoolApkFixture.FirstAdActivity.class, CoolApkFixture.SecondAdActivity.class)) {
+            CoolApkFixture.SharedActivity activity = CoolApkFixture.activity(type);
+            check("CoolApk：共享父方法的广告目标原样返回", ff.invoke(create, activity, (Object) null) == null);
+            check("CoolApk：两个广告目标均先执行一次原方法再关闭", activity.creates == 1
+                    && activity.finishes == 1 && activity.finishedAfterCreate);
+            activity.failure = new IllegalStateException("activity original failure");
+            Throwable original = null;
+            try {
+                ff.invoke(create, activity, (Object) null);
+            } catch (IllegalStateException expected) {
+                original = expected;
+            }
+            check("CoolApk：目标原异常身份保持且 finally 关闭，不重复原方法", original == activity.failure
+                    && activity.creates == 2 && activity.finishes == 2);
+        }
+        ordinary.failure = new IllegalStateException("ordinary original failure");
+        Throwable original = null;
+        try {
+            ff.invoke(create, ordinary, (Object) null);
+        } catch (IllegalStateException expected) {
+            original = expected;
+        }
+        check("CoolApk：普通页面抛异常时仍不关闭，原异常身份保持", original == ordinary.failure
+                && ordinary.creates == 2 && ordinary.finishes == 0);
+        Xp.unhookAll();
     }
 
     public static class TestModule extends io.github.libxposed.api.XposedModule {

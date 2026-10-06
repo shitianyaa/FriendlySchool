@@ -70,6 +70,10 @@ public class CoolApkTarget extends SchoolTargetBase {
     /** attach 时可能尚未解密，onCreate 只重试未安装的方法。 */
     private final Set<Method> installedMethods = new HashSet<Method>();
 
+    /** onCreate 可能来自公共父类；共享 Hook 只结束明确登记的实际类。 */
+    private final Set<Class<?>> blockedActivities =
+            Collections.synchronizedSet(new HashSet<Class<?>>());
+
     @Override
     public String shortName() {
         return NAME;
@@ -321,6 +325,8 @@ public class CoolApkTarget extends SchoolTargetBase {
                 log("blockActivity MISS: " + label + " —— onCreate(Bundle) 不存在");
                 return;
             }
+            // 两个目标可能共享同一个父方法，必须在方法去重前登记各自的类。
+            blockedActivities.add(cls);
             if (installedMethods.contains(onCreate)) {
                 return;
             }
@@ -332,11 +338,12 @@ public class CoolApkTarget extends SchoolTargetBase {
                     // finish 仍然会执行，拦截不会因为业务异常而静默失效。
                     try {
                         Object self = chain.getThisObject();
-                        if (self instanceof android.app.Activity) {
+                        if (self instanceof android.app.Activity
+                                && blockedActivities.contains(self.getClass())) {
                             ((android.app.Activity) self).finish();
-                        }
-                        if (reserveCall(label + " [已拦截]")) {
-                            logCall(label + " [已拦截]", "onCreate", "finished");
+                            if (reserveCall(label + " [已拦截]")) {
+                                logCall(label + " [已拦截]", "onCreate " + self.getClass().getName(), "finished");
+                            }
                         }
                     } catch (Throwable ignored) {
                     }
