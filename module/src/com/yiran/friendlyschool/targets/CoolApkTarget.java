@@ -195,26 +195,6 @@ public class CoolApkTarget extends SchoolTargetBase {
     }
 
     /**
-     * 把一个方法（全重载）换成 <b>no-op</b>：不调原方法、直接返回 null。
-     *
-     * <h3>为什么这里可以 no-op（而 SDK 初始化不行）</h3>
-     * 本项目有两次硬教训：易校园 {@code initThird}、GYBK {@code initAnyThinkSDK}
-     * —— 那两处是<b>初始化中枢</b>，no-op 会让调用方永远等不到回调，卡死启动流程。
-     * 而 {@code EntityDelayLoadADHelper.ހ(Entity, List)} 是<b>纯插入动作</b>：
-     * 把广告卡片放进展示列表，没有返回值、没有回调依赖（观测已确认它返回 void），
-     * 不插就不显示，不会抬断任何状态机。
-     *
-     * <h3>证据（2026-10-06 真机观测，单变量）</h3>
-     * 滚动信息流/回复列表时反复出现同一序列，共 4 次（对应 4 个广告位）：
-     * <pre>
-     *   ScopeAdManager.ׯ(bu5, 3000000) -> true          门禁通过
-     *   ScopeAdManager.֏ / Ԯ(bu5, 3000, ...)           加载广告
-     *   EntityDelayLoadADHelper.ހ(EntityCard, List)   ★ 插入
-     * </pre>
-     * 且位置计算器给出了插入位：{@code ؠ(FeedReply) -> 2}（回复列表第 2 条后，
-     * 与用户截图里那条电商推广广告位置一致）、{@code ֈ(List) -> 13}（信息流）。
-     */
-    /**
      * 只在「要插入的确实是广告卡」时断开插入，其余原样放行。
      *
      * <h3>为什么不直接 noop 整个方法</h3>
@@ -353,32 +333,6 @@ public class CoolApkTarget extends SchoolTargetBase {
             log("blockActivity OK: " + label + " —— onCreate 后立即 finish");
         } catch (Throwable t) {
             log("blockActivity FAILED: " + label + " : " + t);
-        }
-    }
-
-    private void noop(final ClassLoader cl, final String className, final String methodName, final String label) {
-        try {
-            Class<?> cls = Xp.findClassIfExists(className, cl);
-            if (cls == null) {
-                log("noop MISS: " + label + " —— 类不存在");
-                return;
-            }
-            List<?> handles = Xp.hookAllNamed(cls, methodName, chain -> {
-                try {
-                    if (reserveCall(label + " [已拦截]")) {
-                        logCall(label + " [已拦截]", summarizeArgs(chain.getArgs()), "blocked");
-                    }
-                } catch (Throwable ignored) {
-                }
-                return null;
-            });
-            if (handles.isEmpty()) {
-                log("noop MISS: " + label + " —— 方法不存在");
-            } else {
-                log("noop OK: " + label + " (" + handles.size() + " 个重载) —— 广告插入已断开");
-            }
-        } catch (Throwable t) {
-            log("noop FAILED: " + label + " : " + t);
         }
     }
 
