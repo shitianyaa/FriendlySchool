@@ -153,7 +153,14 @@ echo "-- APK 内 scope.list："
 unzip -p "$OUT/module.apk" META-INF/xposed/scope.list | sed 's/^/   /'
 
 echo "-- dex 内含入口类："
-if unzip -p "$OUT/module.apk" classes.dex | grep -aq "L${ENTRY_CLASS//./\/};"; then
+# 注意：这里**不能**用 `grep -q`。
+# `grep -q` 一命中就退出，`unzip` 还在往管道里写就会收到 SIGPIPE（退出码 141）；
+# 而本脚本开头是 `set -o pipefail`，于是整条管道被判为失败 ——
+# 表现为「入口类不在 dex 里！」这个**误报**。
+# 触发条件：dex 超过管道缓冲（Linux 默认 65536 字节）。2026-10-06 加 CoolApkTarget 后
+# dex 长到 136,744 字节，这条误报才暴露出来（之前 dex 在缓冲内，race 侥幸没发生）。
+# 修法：去掉 -q，让 grep 读完整个流（读完即 EOF，不会提前退出）。
+if unzip -p "$OUT/module.apk" classes.dex | grep -a "L${ENTRY_CLASS//./\/};" >/dev/null; then
   echo "   ok  L${ENTRY_CLASS//./\/};"
 else
   echo "   入口类不在 dex 里！" >&2; exit 1
