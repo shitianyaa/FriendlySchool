@@ -120,8 +120,7 @@
 ```
 
 ```bash
-# Windows Git Bash（需要 cygpath）；测试和构建分别运行
-bash module/test/run.sh
+# Windows Git Bash（需要 cygpath）
 bash build.sh
 ```
 

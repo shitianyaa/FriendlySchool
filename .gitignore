@@ -3,6 +3,10 @@ module/build/
 dist/
 work/
 
+# 测试与调试脚本仅本地保留，不随公开仓发布
+module/test/
+tools/
+
 # 本地签名密钥：首次构建时由 build.sh / build.ps1 自动生成，不要提交
 module/mod.keystore
 
