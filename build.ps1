@@ -17,7 +17,7 @@ $META_X = Join-Path $META "META-INF\xposed"
 $MANIFEST = Join-Path $MOD "AndroidManifest.xml"
 
 $APP_DIR = if ($env:APPDIR) { $env:APPDIR } else { Join-Path $SCRIPT_DIR "dist" }
-$APK_NAME = "FriendlySchool-LSPosed-v2.3.apk"
+$APK_NAME = "FriendlySchool-LSPosed-v2.3.1.apk"
 
 $D8 = Join-Path $BT "d8.bat"
 $AAPT2 = Join-Path $BT "aapt2.exe"

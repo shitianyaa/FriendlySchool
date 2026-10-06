@@ -2,6 +2,18 @@
 
 随改动维护；发布时将对应版本的条目用作 Release 说明，并补上发布日期。
 
+## 2.3.1（2026-10-06）
+
+versionCode：`7`。
+
+### 修复
+
+- 酷安开屏：补齐「内嵌在主界面内的开屏 Fragment」这条宿主路径。此前只结束独立开屏页（`SplashAdActivity` / 第三方 SDK 开屏页），而实测冷启动多数走 `MainActivity` 内嵌 `SplashAdFragment`，仍会看到开屏广告。现让该 Fragment 正常走完生命周期后，由主线程投递宿主自己的结束信号（`setFragmentResult("SplashAd", {FINISH_REASON: "sdk_should_go_main"})`，与倒计时结束 / 跳过按钮同通道同载荷），由宿主自行清理与续接；并按 Fragment 实例去重，避免重复投递。
+
+### 使用边界
+
+- 两条开屏宿主路径由服务端与竞价决定、互斥出现；本次只覆盖已确认的这两条。
+
 ## 2.3（2026-10-06）
 
 versionCode：`6`。

@@ -52,6 +52,8 @@ public class CoolApkTarget extends SchoolTargetBase {
     private static final String C_AT_SPLASH_ACT =
             "com.anythink.core.common.inner.ui.activity.ATMixSplashActivity";
     private static final String C_SPLASH_LOADER = "com.coolapk.market.view.splash.SplashAdLoader";
+    /** 内嵌开屏 Fragment：MainActivity 宿主路径的净化点。 */
+    private static final String C_SPLASH_FRAGMENT = "com.coolapk.market.view.splash.SplashAdFragment";
     private static final String C_SDK_UTILS = "com.coolapk.market.view.ad.SdkManagerUtils";
     private static final String C_SCOPE_MGR = "com.coolapk.market.view.ad.scope.ScopeAdManager";
     private static final String C_LOADER_FACTORY = "com.coolapk.market.view.ad.scope.AdLoaderFactory";
@@ -69,6 +71,9 @@ public class CoolApkTarget extends SchoolTargetBase {
 
     /** attach 时可能尚未解密，onCreate 只重试未安装的方法。 */
     private final Set<Method> installedMethods = new HashSet<Method>();
+
+    /** 内嵌开屏按 Fragment 实例去重：PENDING/SENT 时不重复投递结束信号。 */
+    private final CoolApkSplashDispatch splashDispatch = new CoolApkSplashDispatch();
 
     /** onCreate 可能来自公共父类；共享 Hook 只结束明确登记的实际类。 */
     private final Set<Class<?>> blockedActivities =
@@ -102,9 +107,11 @@ public class CoolApkTarget extends SchoolTargetBase {
         log("=== 观测层安装开始 === Ads 实体类=" + (ADS_CLASS == null ? "未找到" : ADS_CLASS.getName()));
 
         log("--- 开屏 ---");
-        log("--- 开屏（只断开广告浮层，不碰 SDK 初始化）---");
+        log("--- 开屏（Activity 浮层 + MainActivity 内嵌 Fragment，两条宿主路径都覆盖）---");
         blockActivity(cl, C_SPLASH_ACT, "开屏Activity");
         blockActivity(cl, C_AT_SPLASH_ACT, "AnyThink开屏Activity");
+        // MainActivity 宿主路径：SplashAdFragment 起完生命周期后，喂宿主自己的 dismiss 信号。
+        suppressEmbeddedSplash(cl, C_SPLASH_FRAGMENT, "SplashAdFragment");
         obs(cl, C_SPLASH_LOADER, M_058F, "SplashAdLoader.֏");
         obs(cl, C_SPLASH_LOADER, M_05EF, "SplashAdLoader.ׯ");
         obs(cl, C_SPLASH_LOADER, M_0620, "SplashAdLoader.ؠ");
@@ -266,6 +273,123 @@ public class CoolApkTarget extends SchoolTargetBase {
         } catch (Throwable t) {
             log("noopSponsor FAILED: " + label + " : " + t);
         }
+    }
+
+    /**
+     * 开屏 Fragment 的 UI 层净化 —— 喂给宿主它<b>自己的</b>结束信号。
+     *
+     * <h3>为什么是这一层（三次真机试错 + 参考实现印证）</h3>
+     * 冷启动开屏有两条互斥宿主路径，由服务端/竞价决定：
+     * <pre>
+     *   15:20:54  宿主 SplashAdActivity   本类 blockActivity 命中 [已拦截] → 压掉
+     *   18:44:58  宿主 MainActivity       无拦截 → 广告显示
+     *   19:16:35  宿主 MainActivity       无拦截 → 广告显示
+     *   20:19:21  宿主 MainActivity       无拦截 → 广告显示（用户实测）
+     * </pre>
+     * 第二条路径是 {@code SplashAdFragment} 嵌在 MainActivity 的 {@code main_splash_ad}
+     * 容器里（字符串键 {@code SPLASH_FROM_FRAGMENT}）。试过的三条错路都不通：
+     * <ul>
+     *   <li>断 {@code SplashAdLoader.ؠ/ׯ}：无效 —— Fragment 照样 {@code onCreateView} 建视图；</li>
+     *   <li>{@code onCreateView} 返回 null：<b>卡开屏</b> —— 视图没了但没人告诉宿主收尾；</li>
+     *   <li>{@code SdkManagerUtils.ԫ() → false}：无效 —— 不是闸门，加载照跑。</li>
+     * </ul>
+     *
+     * <h3>正确做法：复用宿主原生的 dismiss 通道</h3>
+     * 先 {@code proceed()} 让 Fragment 正常走完生命周期，再由主线程发宿主自己的
+     * fragment-result：{@code setFragmentResult("SplashAd", {FINISH_REASON: "sdk_should_go_main"})}
+     * —— 这正是倒计时结束 / 跳过按钮用的同一个通道与同一个载荷。宿主收到后
+     * <b>自己</b>做清理、续接与移除 Fragment，我们不碰任何业务决策，也不会把它卡在
+     * 隐藏的开屏帧上。（字符串 {@code sdk_should_go_main} / {@code FINISH_REASON} /
+     * {@code SplashAd} 均已在酷安 16.6.4 字符串池确认存在。）
+     *
+     * <h3>与参考实现的关系</h3>
+     * 思路参考 yylsping/coolapk-purifier（同为 libxposed API 102、同适配 16.6.4）的
+     * {@code SplashEmbeddedHooks}/{@code SplashEmbeddedDispatch}；本实现按其核心语义
+     * （先 proceed 再发原生 finish 信号、只在确为已添加的 Fragment 上动作、
+     * 按 Fragment 实例去重）落地，但不引入其完整决策观测与诊断台账。
+     */
+    private synchronized void suppressEmbeddedSplash(final ClassLoader cl, final String className,
+                                                     final String label) {
+        try {
+            Class<?> cls = Xp.findClassIfExists(className, cl);
+            if (cls == null) {
+                log("suppressEmbeddedSplash MISS: " + label + " —— 类不存在");
+                return;
+            }
+            // 优先 onViewCreated（系统弹窗令宿主 paused 时仍会跑）；退而求其次 onResume。
+            Method lifecycle = Xp.findMethod(cls, "onViewCreated", android.view.View.class, android.os.Bundle.class);
+            String lifecycleName = "onViewCreated";
+            if (lifecycle == null) {
+                lifecycle = Xp.findMethod(cls, "onResume");
+                lifecycleName = "onResume";
+            }
+            if (lifecycle == null) {
+                log("suppressEmbeddedSplash MISS: " + label + " —— 无 onViewCreated/onResume");
+                return;
+            }
+            if (installedMethods.contains(lifecycle)) {
+                return;
+            }
+            final Class<?> fragmentType = cls;
+            Xp.hook(lifecycle, chain -> {
+                Object result = chain.proceed();
+                Object self = chain.getThisObject();
+                // 只处理本类实例，避免误伤共享父方法命中的其它 Fragment。
+                if (self != null && self.getClass() == fragmentType) {
+                    // PENDING 在 post 前同步占位，生命周期重入也不会重复排队。
+                    if (splashDispatch.tryMarkPending(self)) {
+                        try {
+                            dismissEmbeddedSplash(self, label);
+                        } catch (Throwable t) {
+                            splashDispatch.markDispatchFailed(self);
+                            log("suppressEmbeddedSplash 发送结束信号失败: " + t);
+                        }
+                    }
+                }
+                return result;
+            });
+            installedMethods.add(lifecycle);
+            log("suppressEmbeddedSplash OK: " + label + " —— 在 " + lifecycleName + " 后发宿主原生结束信号");
+        } catch (Throwable t) {
+            log("suppressEmbeddedSplash FAILED: " + label + " : " + t);
+        }
+    }
+
+    /** 宿主原生的开屏 dismiss 载荷：倒计时/跳过按钮同款。 */
+    private static final String SPLASH_RESULT_KEY = "SplashAd";
+    private static final String SPLASH_FINISH_REASON = "sdk_should_go_main";
+
+    /**
+     * 在主线程上、于 Fragment 生命周期跑完之后，投递宿主自己的 fragment-result
+     * 结束信号。全程反射，不依赖 androidx（模块不携带 androidx）。
+     */
+    private void dismissEmbeddedSplash(final Object fragment, final String label) {
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            try {
+                Object added = fragment.getClass().getMethod("isAdded").invoke(fragment);
+                if (!Boolean.TRUE.equals(added)) {
+                    splashDispatch.clearPending(fragment);
+                    return;   // 宿主已自行移除，什么都不用做
+                }
+                Object fm = fragment.getClass().getMethod("getParentFragmentManager").invoke(fragment);
+                if (fm == null) {
+                    splashDispatch.clearPending(fragment);
+                    return;
+                }
+                android.os.Bundle bundle = new android.os.Bundle();
+                bundle.putString("FINISH_REASON", SPLASH_FINISH_REASON);
+                fm.getClass().getMethod("setFragmentResult", String.class, android.os.Bundle.class)
+                        .invoke(fm, SPLASH_RESULT_KEY, bundle);
+                splashDispatch.markSent(fragment);
+                if (reserveCall(label + " [已净化]")) {
+                    logCall(label + " [已净化]", "setFragmentResult(" + SPLASH_RESULT_KEY + ")",
+                            SPLASH_FINISH_REASON);
+                }
+            } catch (Throwable t) {
+                splashDispatch.markDispatchFailed(fragment);
+                log("dismissEmbeddedSplash 失败: " + t);
+            }
+        });
     }
 
     /**

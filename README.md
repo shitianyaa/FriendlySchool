@@ -32,7 +32,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3`（versionCode `6`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3.1`（versionCode `7`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -116,6 +116,10 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 - **问题反馈**：如果在日常使用中遇到 Bug 或异常，欢迎提交 [Issue](https://github.com/shitianyaa/FriendlySchool/issues)；
 - **新应用适配**：如果有想要支持或净化的校园 / 常用 App，非常欢迎提交 [Issue](https://github.com/shitianyaa/FriendlySchool/issues) 并附上应用名称、版本及相关功能诉求！
 
+## 🙏 致谢
+
+感谢 [yylsping/coolapk-purifier](https://github.com/yylsping/coolapk-purifier)。FriendlySchool 的酷安内嵌开屏广告处理参考了该项目 `SplashEmbeddedHooks` / `SplashEmbeddedDispatch` 的设计思路，包括在 Fragment 生命周期完成后复用宿主原生结束通道，以及按 Fragment 实例避免重复投递结束信号。
+
 ## 从源码构建
 
 源码仓库：[shitianyaa/FriendlySchool](https://github.com/shitianyaa/FriendlySchool)。官方模块收录仓 [Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool) 用于说明与 APK Release，源码在个人仓库维护。
@@ -134,9 +138,9 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-官方模块仓库的 Release 标题使用 `2.3`，标签使用 `6-2.3`，随 Release 上传 APK 并填写更新说明。
+官方模块仓库的 Release 标题使用 `2.3.1`，标签使用 `7-2.3.1`，随 Release 上传 APK 并填写更新说明。
 
 ## 📜 许可证
 
