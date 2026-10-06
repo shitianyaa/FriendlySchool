@@ -46,10 +46,12 @@ def dump(pkg):
     """跑一次 lspctl hook-debug dump，返回 (原始文本, 错误说明)。"""
     cmd = ["adb", "shell", "su", "-c", f"{LSPCTL} hook-debug dump"]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, errors="ignore", timeout=90)
+        out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
     except subprocess.TimeoutExpired:
         return "", "dump 超时（90s）：设备无响应或进程过多"
     text = (out.stdout or "") + (out.stderr or "")
+    if out.returncode:
+        return "", f"dump 命令失败（退出码 {out.returncode}）：{text.strip()}"
     if "No process to dump" in text:
         return "", ("No process to dump —— hook-debug 只在进程 fork 时注入："
                     "请先在 Hook Debug 打开的前提下重启目标 App，再跑本脚本")
@@ -58,6 +60,20 @@ def dump(pkg):
     if not text.strip():
         return "", "dump 无输出：检查 adb 连接、root、以及设备上 lspctl 是否存在"
     return text, None
+
+
+def package_dump(text, pkg):
+    """保留目标包及其冒号子进程，完整性检查也只能使用这个范围。"""
+    selected = False
+    lines = []
+    for line in text.splitlines():
+        match = PROC_RE.match(line)
+        if match:
+            name = match.group(3)
+            selected = name == pkg or name.startswith(pkg + ":")
+        if selected:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def parse(text):
@@ -103,7 +119,7 @@ def main():
     ap.add_argument("--outdir", default=DEFAULT_OUTDIR, help=f"存档目录（默认 {DEFAULT_OUTDIR}）")
     ap.add_argument("--label", default="", help="归档名里的标记，例如 after-update")
     ap.add_argument("--no-diff", action="store_true", help="只存档，不与上一份比对")
-    ap.add_argument("--limit", type=int, default=400, help="快照里最多写多少条方法签名（默认 400）")
+    ap.add_argument("--limit", type=int, default=400, help="控制台最多展示的方法数；快照始终保存完整清单")
     args = ap.parse_args()
 
     if not adb_available():
@@ -113,9 +129,12 @@ def main():
     if err:
         sys.exit(err)
 
+    if args.limit < 1:
+        ap.error("--limit 必须大于 0")
+    text = package_dump(text, args.pkg)
     procs = parse(text)
     if not procs:
-        sys.exit("dump 有输出但没解析出任何方法 —— lspctl 输出格式可能变了，请人工看一眼")
+        sys.exit(f"dump 中没有目标进程 {args.pkg}：请确认目标 App 已启动且已启用 Hook Debug")
 
     total = sum(len(v) for v in procs.values())
     broken, flags_false = entry_point_broken(text)
@@ -128,10 +147,10 @@ def main():
             s.update(v)
         return s
 
-    method_lines = sorted(signatures())[:limit]
+    method_lines = sorted(signatures())
 
     os.makedirs(args.outdir, exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     name = f"{args.pkg}-{stamp}" + (f"-{args.label}" if args.label else "") + ".txt"
     path = os.path.join(args.outdir, name)
 
@@ -139,11 +158,18 @@ def main():
     prev_methods = set()
     if prev:
         with open(prev, encoding="utf-8") as f:
-            prev_methods = {l.strip() for l in f if l.strip() and not l.startswith("#") and not l.startswith("pid=")}
+            previous = f.read()
+        prev_methods = {l.strip() for l in previous.splitlines()
+                        if l.strip() and not l.startswith("#") and not l.startswith("pid=")}
+        count = re.search(r"去重后: (\d+)", previous)
+        if not count or int(count.group(1)) != len(prev_methods) or "# 进程范围: " + args.pkg not in previous:
+            print("[skip] 上一份快照被截断或来自旧版未筛选进程，跳过比对，本次重建基线")
+            prev = None
 
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
+    with open(path, "x", encoding="utf-8", newline="\n") as f:
         f.write(f"# hook 清单快照\n")
         f.write(f"# 包名: {args.pkg}\n")
+        f.write(f"# 进程范围: {args.pkg} 及其冒号子进程\n")
         f.write(f"# 时间: {datetime.datetime.now().isoformat(timespec='seconds')}\n")
         for p, ms in sorted(procs.items()):
             f.write(f"pid={p} 方法数={len(ms)}\n")
@@ -152,7 +178,7 @@ def main():
         for b in broken:
             f.write(f"#   BROKEN {b}\n")
         f.write(f"# accessFlags eq=false（ART 优化常态，非问题）: {flags_false}\n")
-        f.write(f"# methods（若超过 {limit} 条则被截断，本文件共 {len(method_lines)} 条）\n")
+        f.write(f"# methods（完整清单，共 {len(method_lines)} 条）\n")
         for m in method_lines:
             f.write(m + "\n")
 
@@ -161,18 +187,18 @@ def main():
           f"accessFlags 差异 {flags_false} 条（常态）")
     if broken:
         print("     ⚠ 以下 hook 的入口点被破坏（= 没真正生效），需要人工核对：")
-        for b in broken[:20]:
+        for b in broken[:min(20, limit)]:
             print(f"       - {b}")
 
     if prev:
         cur = set(method_lines)
         gone, added = sorted(prev_methods - cur), sorted(cur - prev_methods)
         print(f"\n与上一份快照比对（{os.path.basename(prev)}）：消失 {len(gone)} 条，新增 {len(added)} 条")
-        for g in gone[:30]:
+        for g in gone[:min(30, limit)]:
             print(f"   - {g}")
-        if len(gone) > 30:
-            print(f"   … 其余 {len(gone) - 30} 条见快照文件")
-        for a in added[:15]:
+        if len(gone) > min(30, limit):
+            print(f"   … 其余 {len(gone) - min(30, limit)} 条请比对两份完整快照")
+        for a in added[:min(15, limit)]:
             print(f"   + {a}")
     else:
         print("     （没有更早的同包名快照，本次作为基线）")

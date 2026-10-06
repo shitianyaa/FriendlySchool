@@ -5,39 +5,49 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
+import uuid
+import xml.etree.ElementTree as ET
 
 ADB = "adb"
 
 
 def sh(cmd):
     env = dict(os.environ, MSYS2_ARG_CONV_EXCL="*")
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", env=env)
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=env, timeout=30)
+    if r.returncode:
+        raise RuntimeError(f"命令失败（退出码 {r.returncode}）：{r.stderr or r.stdout}")
     return r.stdout + r.stderr
 
 
 def dump():
-    sh(ADB + " shell uiautomator dump /sdcard/ui.xml")
-    sh(ADB + " pull /sdcard/ui.xml /tmp/ui.xml")
-    return open("/tmp/ui.xml", encoding="utf-8").read()
+    remote = f"/data/local/tmp/lsposed-ui-{uuid.uuid4().hex}.xml"
+    output = sh([ADB, "shell", "uiautomator", "dump", remote])
+    if "dumped to:" not in output or "ERROR:" in output:
+        raise RuntimeError(f"获取 UI 失败：{output.strip()}")
+    temp_root = Path("D:/tmp/codex/lsposed-ui")
+    temp_root.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(dir=temp_root) as folder:
+            local = Path(folder) / "ui.xml"
+            sh([ADB, "pull", remote, str(local)])
+            return local.read_text(encoding="utf-8")
+    finally:
+        sh([ADB, "shell", "rm", remote])
 
 
 def parse(x):
     out = []
-    for n in re.findall(r"<node[^>]*>", x):
-        t = re.search(r'text="([^"]*)"', n)
-        d = re.search(r'content-desc="([^"]*)"', n)
-        b = re.search(r'bounds="([^"]*)"', n)
-        c = re.search(r'class="([^"]*)"', n)
-        k = re.search(r'checkable="([^"]*)"', n)
-        ck = re.search(r'checked="([^"]*)"', n)
+    for n in ET.fromstring(x).iter("node"):
         out.append({
-            "text": t.group(1) if t else "",
-            "desc": d.group(1) if d else "",
-            "bounds": b.group(1) if b else "",
-            "class": (c.group(1).split(".")[-1] if c else ""),
-            "checkable": k.group(1) if k else "",
-            "checked": ck.group(1) if ck else "",
+            "text": n.get("text", ""),
+            "desc": n.get("content-desc", ""),
+            "bounds": n.get("bounds", ""),
+            "class": n.get("class", "").split(".")[-1],
+            "checkable": n.get("checkable", ""),
+            "checked": n.get("checked", ""),
         })
     return out
 
@@ -50,13 +60,24 @@ def center(bounds):
 
 
 def tap(bounds):
-    x, y = center(bounds)
-    sh(ADB + " shell input tap %d %d" % (x, y))
+    point = center(bounds)
+    if point is None:
+        raise ValueError(f"无效 bounds：{bounds}")
+    x, y = point
+    sh([ADB, "shell", "input", "tap", str(x), str(y)])
     print("tap %d,%d  (%s)" % (x, y, bounds))
 
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "ls"
+    if cmd == "tapbounds":
+        tap(sys.argv[2])
+        return
+    if cmd == "back":
+        sh([ADB, "shell", "input", "keyevent", "KEYCODE_BACK"])
+        return
+    if cmd not in ("ls", "find", "tap"):
+        raise ValueError(f"未知命令：{cmd}")
     nodes = parse(dump())
     if cmd == "ls":
         for n in nodes:
@@ -76,11 +97,10 @@ def main():
         if not hits:
             print("NOT FOUND: " + want)
             sys.exit(2)
-        tap(hits[min(n, len(hits) - 1)]["bounds"])
-    elif cmd == "tapbounds":
-        tap(sys.argv[2])
-    elif cmd == "back":
-        sh(ADB + " shell input keyevent KEYCODE_BACK")
+        if n < 0 or n >= len(hits):
+            raise ValueError(f"匹配序号越界：{n}，共 {len(hits)} 项")
+        tap(hits[n]["bounds"])
 
 
-main()
+if __name__ == "__main__":
+    main()
