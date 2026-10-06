@@ -1,5 +1,0 @@
-# 额外参与 module/test/run.sh 编译的源文件（相对 FriendlySchool/module/）。
-#
-# 2026-10-01 起 run.sh 已经会编译 module/src 下的**全部** .java（迁移完成，不存在
-# legacy/新 API 混编的问题），所以这个文件一般留空即可 —— 它只是给"某个文件暂时
-# 不能进整包编译"的场景留的口子。
