@@ -45,6 +45,12 @@ public class CoolApkTarget extends SchoolTargetBase {
 
     // ---- 目标类名 ----
     private static final String C_SPLASH_ACT = "com.coolapk.market.view.splash.SplashAdActivity";
+    /**
+     * AnyThink(Mintegral) 自带的开屏广告 Activity，与酷安自有开屏并列。
+     * 两者都声明在酷安清单里且都未导出，只用于展示开屏广告。
+     */
+    private static final String C_AT_SPLASH_ACT =
+            "com.anythink.core.common.inner.ui.activity.ATMixSplashActivity";
     private static final String C_SPLASH_LOADER = "com.coolapk.market.view.splash.SplashAdLoader";
     private static final String C_SDK_UTILS = "com.coolapk.market.view.ad.SdkManagerUtils";
     private static final String C_SCOPE_MGR = "com.coolapk.market.view.ad.scope.ScopeAdManager";
@@ -92,8 +98,9 @@ public class CoolApkTarget extends SchoolTargetBase {
         log("=== 观测层安装开始 === Ads 实体类=" + (ADS_CLASS == null ? "未找到" : ADS_CLASS.getName()));
 
         log("--- 开屏 ---");
-        obs(cl, C_SPLASH_ACT, "onCreate", "开屏Activity.onCreate");
-        obs(cl, C_SPLASH_ACT, "onDestroy", "开屏Activity.onDestroy");
+        log("--- 开屏（只断开广告浮层，不碰 SDK 初始化）---");
+        blockActivity(cl, C_SPLASH_ACT, "开屏Activity");
+        blockActivity(cl, C_AT_SPLASH_ACT, "AnyThink开屏Activity");
         obs(cl, C_SPLASH_LOADER, M_058F, "SplashAdLoader.֏");
         obs(cl, C_SPLASH_LOADER, M_05EF, "SplashAdLoader.ׯ");
         obs(cl, C_SPLASH_LOADER, M_0620, "SplashAdLoader.ؠ");
@@ -274,6 +281,71 @@ public class CoolApkTarget extends SchoolTargetBase {
             }
         } catch (Throwable t) {
             log("noopSponsor FAILED: " + label + " : " + t);
+        }
+    }
+
+    /**
+     * 让某个 Activity 的 onCreate 直接结束，不创建界面。
+     *
+     * <h3>为什么只拦这一层</h3>
+     * 两个开屏 Activity 只用于展示开屏广告：
+     * <ul>
+     *   <li>{@code SplashAdActivity} 是叠在 MainActivity 之上的浮层
+     *       （{@code pm dump} 里 {@code taskRootClass} 仍是 MainActivity，
+     *       显示约 3 秒后 PAUSED/STOPPED），不是 App 的启动入口；</li>
+     *   <li>{@code ATMixSplashActivity} 同理，是 AnyThink 的开屏广告页。</li>
+     * </ul>
+     * 所以直接 finish 不会影响 App 正常启动。
+     *
+     * <h3>为什么不拦 SDK 初始化</h3>
+     * {@code SdkManagerUtils.initSplashAdSdk(ctx, "GM_SPLASH")} 是 SDK 初始化中枢，
+     * 本仓已有两次教训（易校园 {@code initThird}、GYBK {@code initAnyThinkSDK}）
+     * —— no-op 初始化中枢会连带其它功能一起坏掉。这里只断显示。
+     *
+     * <h3>必须先 proceed 再 finish</h3>
+     * 曾经试过「先 finish 再 return null（不 proceed）」，真机直接抛
+     * {@code SuperNotCalledException: Activity ... did not call through to super.onCreate()}：
+     * 框架在 onStart/onResume 会校验 onCreate 是否调用过 super，
+     * 跳过原方法就等于跳过 {@code super.onCreate()}。所以顺序必须是
+     * {@code proceed()} → {@code finish()}：框架初始化完成，界面还没绘制就被结束。
+     */
+    private synchronized void blockActivity(final ClassLoader cl, final String className, final String label) {
+        try {
+            Class<?> cls = Xp.findClassIfExists(className, cl);
+            if (cls == null) {
+                log("blockActivity MISS: " + label + " —— 类不存在");
+                return;
+            }
+            Method onCreate = Xp.findMethod(cls, "onCreate", android.os.Bundle.class);
+            if (onCreate == null) {
+                log("blockActivity MISS: " + label + " —— onCreate(Bundle) 不存在");
+                return;
+            }
+            if (installedMethods.contains(onCreate)) {
+                return;
+            }
+            Xp.hook(onCreate, chain -> {
+                try {
+                    return chain.proceed();
+                } finally {
+                    // 放 finally：即使原 onCreate 自己抛异常（例如缺 extra），
+                    // finish 仍然会执行，拦截不会因为业务异常而静默失效。
+                    try {
+                        Object self = chain.getThisObject();
+                        if (self instanceof android.app.Activity) {
+                            ((android.app.Activity) self).finish();
+                        }
+                        if (reserveCall(label + " [已拦截]")) {
+                            logCall(label + " [已拦截]", "onCreate", "finished");
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+            installedMethods.add(onCreate);
+            log("blockActivity OK: " + label + " —— onCreate 后立即 finish");
+        } catch (Throwable t) {
+            log("blockActivity FAILED: " + label + " : " + t);
         }
     }
 
