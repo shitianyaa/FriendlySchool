@@ -113,19 +113,19 @@ public class CoolApkTarget extends SchoolTargetBase {
         filterSponsors(cl, C_ENTITY_AD, M_037F, "EntityAdHelper.Ϳ");
         filterSponsors(cl, C_INTERSTITIAL, M_037F, "EntityInterstitialAdHelper.Ϳ");
 
-        log("--- 广告插入 / 位置计算 ---");
+        log("--- 广告插入（日志证明：广告卡是 arg0 直接传入，不过列表）---");
         obs(cl, C_DELAY_AD, M_05EF, "EntityDelayLoadADHelper.ׯ");
         obs(cl, C_DELAY_AD, M_0620, "EntityDelayLoadADHelper.ؠ");
         obs(cl, C_DELAY_AD, M_0588, "EntityDelayLoadADHelper.ֈ");
         obs(cl, C_DELAY_AD, M_058F, "EntityDelayLoadADHelper.֏");
-        obs(cl, C_DELAY_AD, M_0780, "EntityDelayLoadADHelper.ހ");
         obs(cl, C_DELAY_AD, M_0781, "EntityDelayLoadADHelper.ށ");
+        noopSponsor(cl, C_DELAY_AD, M_0780, "EntityDelayLoadADHelper.ހ");
 
-        log("--- UI 层插入（找占位）---");
+        log("--- UI 层插入 ---");
         obs(cl, C_DELAY_AD, M_0528, "EntityDelayLoadADHelper.Ԩ");
-        obs(cl, C_DELAY_AD, M_052C, "EntityDelayLoadADHelper.Ԭ");
         obs(cl, C_DELAY_AD, M_052D, "EntityDelayLoadADHelper.ԭ");
         obs(cl, C_DELAY_AD, M_052E, "EntityDelayLoadADHelper.Ԯ");
+        noopSponsor(cl, C_DELAY_AD, M_052C, "EntityDelayLoadADHelper.Ԭ");
 
         log("=== 观测层安装结束 ===");
     }
@@ -203,6 +203,69 @@ public class CoolApkTarget extends SchoolTargetBase {
      * 且位置计算器给出了插入位：{@code ؠ(FeedReply) -> 2}（回复列表第 2 条后，
      * 与用户截图里那条电商推广广告位置一致）、{@code ֈ(List) -> 13}（信息流）。
      */
+    /**
+     * 只在「要插入的确实是广告卡」时断开插入，其余原样放行。
+     *
+     * <h3>为什么不直接 noop 整个方法</h3>
+     * 无差别 noop 会连正常内容一起断，且列表里可能留下占位（表现为空白行）。
+     * 所以判据放在实参上：第一个参数是 sponsor 实体才拦，其它调用原样 proceed。
+     *
+     * <h3>为什么拦这一层</h3>
+     * 真机日志（2026-10-06 11:47）表明：广告卡是作为<b>第一个实参直接传进 ހ / Ԭ 的</b>，
+     * 并不经过 {@code EntityAdHelper.Ϳ} 的列表 —— 所以过滤列表挡不住它，
+     * 必须在插入这一步断。
+     *
+     * <h3>未验证边界</h3>
+     * 断开后原位是否留下空白，取决于列表里本来有没有占位项，需要真机肉眼核验。
+     * 若出现空白，说明要连带移除占位项，而不是简单放行。
+     */
+    private synchronized void noopSponsor(final ClassLoader cl, final String className,
+                                          final String methodName, final String label) {
+        try {
+            Class<?> cls = Xp.findClassIfExists(className, cl);
+            if (cls == null) {
+                log("noopSponsor MISS: " + label + " —— 类不存在");
+                return;
+            }
+            int count = 0;
+            for (Method method : cls.getDeclaredMethods()) {
+                if (!method.getName().equals(methodName)) {
+                    continue;
+                }
+                count++;
+                if (installedMethods.contains(method)) {
+                    continue;
+                }
+                Xp.hook(method, chain -> {
+                    Object first = chain.getArgs().isEmpty() ? null : chain.getArgs().get(0);
+                    boolean sponsor = false;
+                    try {
+                        sponsor = isSponsor(first);
+                    } catch (Throwable ignored) {
+                    }
+                    if (sponsor) {
+                        try {
+                            if (reserveCall(label + " [已拦截]")) {
+                                logCall(label + " [已拦截]", summarizeArgs(chain.getArgs()), "blocked");
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                        return null;
+                    }
+                    return chain.proceed();
+                });
+                installedMethods.add(method);
+            }
+            if (count == 0) {
+                log("noopSponsor MISS: " + label + " —— 方法不存在");
+            } else {
+                log("noopSponsor OK: " + label + " (" + count + " 个重载) —— 仅 sponsor 卡断开插入");
+            }
+        } catch (Throwable t) {
+            log("noopSponsor FAILED: " + label + " : " + t);
+        }
+    }
+
     private void noop(final ClassLoader cl, final String className, final String methodName, final String label) {
         try {
             Class<?> cls = Xp.findClassIfExists(className, cl);
