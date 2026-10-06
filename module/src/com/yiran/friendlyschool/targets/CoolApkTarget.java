@@ -215,9 +215,20 @@ public class CoolApkTarget extends SchoolTargetBase {
      * 并不经过 {@code EntityAdHelper.Ϳ} 的列表 —— 所以过滤列表挡不住它，
      * 必须在插入这一步断。
      *
-     * <h3>未验证边界</h3>
-     * 断开后原位是否留下空白，取决于列表里本来有没有占位项，需要真机肉眼核验。
-     * 若出现空白，说明要连带移除占位项，而不是简单放行。
+     * <h3>真机验证（2026-10-06 11:54）</h3>
+     * 信息流滚动时实际命中并断开：
+     * <pre>
+     *   ހ [已拦截] in{...sponsorCard-feedList-headline-2,
+     *       List(n=25, t=[EntityCard|EntityCard|EntityCard|Feed])} -> blocked
+     *   ހ [已拦截] in{...sponsorCard-feedList-huati.23257-0,
+     *       List(n=22, t=[EntityCard|EntityCard|Feed|Feed])} -> blocked
+     *   Ԭ [已拦截] in{...sponsorCard-feedList-huati.23257-0-2, ...} -> blocked
+     * </pre>
+     * 这几次的列表里<b>没有任何 HolderItem 占位</b>，所以断开插入不会留白。
+     *
+     * <h3>仍待核验</h3>
+     * 回复列表（{@code feedDetailReplySponsorCard}）的列表由 HolderItem 组成，
+     * 那一路本次未命中，断开后是否留白仍需真机肉眼核验。
      */
     private synchronized void noopSponsor(final ClassLoader cl, final String className,
                                           final String methodName, final String label) {
