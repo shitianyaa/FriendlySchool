@@ -32,11 +32,15 @@ package com.yiran.friendlyschool.targets;
  *      读的是同一个字段 —— 仅当伪造还在生效（即下面的回退形态）才会显示成「超級JM人」。
  *      实现上**只注入 ad_free 这一个字段**，余额/到期/等级等其它字段一律保持服务端原值。
  *
- *      伪造只在**开屏封面未走完时**生效：App 自己在 ThreeCover 的「同意」里会把
- *      sessionStorage.state 置为 'true'，一旦置位就立刻回到真实值。
- *      这样「我的」页（渲染时现读 localStorage）显示的是**真实会员等级**，
- *      伪造窗口只剩启动那一小段 —— 也正是它唯一被需要的地方。
- *      setItem 一律存真实值，所以落盘数据不被污染。
+ *      伪造窗口（v2.3.2 调整）：**除「我的」页（/member）外，一律伪造 ad_free:true**。
+ *      历史：v2.1.x 只在开屏封面未走完时伪造（sessionStorage.state 置位即回真实值）。
+ *      2.1.10 新增「补签」后，签到页 /daily 的 adFreeStatus 会因伪造已到期而读到真实
+ *      的 ad_free:false，于是弹出「看 5 秒广告才能补签」的闸门 —— 而广告已被本 target
+ *      清空，闸门永不放行，补签卡死。改为按路由伪造后，/daily 读到 ad_free:true，
+ *      补签直接跳过广告弹窗（走 App 自己给免广告会员准备的分支）。
+ *      「我的」页 /member 现读 localStorage 渲染会员卡（CenterCard），故**排除**该页，
+ *      使其显示真实会员等级，不出现「超級JM人」。
+ *      setItem 一律存真实值，所以落盘数据不被污染（伪造只在读取侧生效）。
  *
  * 副作用与残留（如实记录，见 README）：
  *   - SecondCover 被跳过；ThreeCover 的年龄确认按钮未动，仍需要点。
@@ -115,14 +119,14 @@ public class JMComicTarget extends SchoolTargetBase {
             + "var harden=function(v){try{var o=JSON.parse(v);"
             + "if(o&&typeof o==='object'){o.ad_free=true;return JSON.stringify(o)}}catch(e){}"
             + "return MI_ADFREE};"
-            + "var coversDone=function(){try{return !!W.sessionStorage.getItem('state')}catch(e){return false}};"
+            + "var isMemberPage=function(){try{return String((W.location&&W.location.pathname)||'').indexOf('/member')===0}catch(e){return false}};"
             + "try{var SP=W.Storage&&W.Storage.prototype;"
             + "if(SP&&!SP.__jmAdFree){var og=SP.getItem,os=SP.setItem;"
             + "SP.getItem=function(k){"
             + "if(k==='adsList'){return EMPTY_ADS}"
             + "if(k==='adsContent'){return EMPTY_COVER}"
             + "if(k==='memberInfo'){var v=og.call(this,k);"
-            + "if(coversDone()){return v}return v?harden(v):MI_ADFREE}"
+            + "if(isMemberPage()){return v}return v?harden(v):MI_ADFREE}"
             + "return og.call(this,k)};"
             + "SP.setItem=function(k,v){"
             + "if(k==='adsList'){try{os.call(this,k,EMPTY_ADS)}catch(e){}return}"

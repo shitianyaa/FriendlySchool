@@ -32,7 +32,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3.1`（versionCode `7`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3.2`（versionCode `8`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -43,7 +43,7 @@
 |---|---|
 | 易校园 | 7.7.8 |
 | WakeUp 课程表 | 6.5.0（versionCode 540） |
-| JMComic3 | 2.1.9 |
+| JMComic3 | 2.1.10 |
 | 光影边框 | 3.4.5（versionCode 34500） |
 | 酷安 | 16.6.4（versionCode 2609291） |
 
@@ -72,7 +72,7 @@
 （禁漫，成人内容站点客户端）
 
 - **WebView 层去广告**：清空广告缓存的读写两侧并拦掉广告接口，所有广告位无事可做；
-- **开屏**：仅在封面未走完的窗口内，让 App 走它自己的「免广告会员」分支跳过纯广告封面（只改这一个显示标志，余额/到期/等级等其它字段保持服务端原值）；
+- **免广告分支（除「我的」页外）**：让 App 走它自己的「免广告会员」分支 —— 跳过纯广告封面，并让 2.1.10 新增的「补签」不再要求看满广告（点补签直接进入选日期）。**只改 `ad_free` 这一个显示标志**，余额/到期/等级等其它字段保持服务端原值；**「我的」页不伪造**，会员卡显示真实等级；
 - **自动每日签到**：用你自己的账号调官方接口签到，结果会在 App 内弹一条提示（`AUTO_CHECK_IN` 可关）。
 
 ### 光影边框 · `com.dengziwl.bk`
@@ -138,9 +138,9 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.2.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-官方模块仓库的 Release 标题使用 `2.3.1`，标签使用 `7-2.3.1`，随 Release 上传 APK 并填写更新说明。
+官方模块仓库的 Release 标题使用 `2.3.2`，标签使用 `8-2.3.2`，随 Release 上传 APK 并填写更新说明。
 
 ## 📜 许可证
 
