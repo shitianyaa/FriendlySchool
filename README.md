@@ -32,7 +32,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3.2`（versionCode `8`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3.3`（versionCode `9`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -43,7 +43,7 @@
 |---|---|
 | 易校园 | 7.7.8 |
 | WakeUp 课程表 | 6.5.0（versionCode 540） |
-| JMComic3 | 2.1.10 |
+| JMComic3 | 2.1.11 |
 | 光影边框 | 3.4.5（versionCode 34500） |
 | 酷安 | 16.6.4（versionCode 2609291） |
 
@@ -97,7 +97,8 @@
 - **WakeUp 外观设置跟设备不跟账号**：夜间 / 简洁模式存放在当前安装的应用数据里（模块自有键），不随账号切换；新键不存在时按当前账号的原值初始化，之后以本地值为准；清除应用数据或卸载后该设置丢失。
 - **WakeUp 付费皮肤未验证**：皮肤样式数据与权限仍由服务端下发，本地放行 ≠ 服务端给数据，未购买皮肤的实际行为尚未确认。
 - **易校园拦 shell 的副作用**：App 自带的网速探测会失败；易校园自己的设备指纹持久化不在本模块范围内。
-- **JMComic3 会以你自己的账号发少量请求**：签到（读日历 → 提交 → 回读，最多 4 个请求，必要时重试一次）与一次有界的启动期状态采样（每 3 秒一次、最多 100 次，约 5 分钟后自停）。
+- **JMComic3 会以你自己的账号发少量请求**：签到（读日历 →[未签则]提交 → 回读校验；服务端「写后读」有延迟时最多再重读 5 次，故约 3~8 个请求）与一次有界的启动期状态采样（每 3 秒一次、最多 100 次，约 5 分钟后自停）。
+- **JMComic3 冷启动首页空白会自愈**：约一半概率清晨冷启动后首页空白（App 自身在广告被清空后的竞态，详见 CHANGELOG 2.3.3）。模块检测到该状态会让页面**自动重载一次**（`sessionStorage.state` 跨重载存活，直接进首页）；命中时你会看到约 1~2 秒的刷新。
 - **有被服务端风控识别的可能**：改客户端行为总有这个风险，请自行评估。
 
 ## ⚖️ 免责声明
@@ -138,9 +139,9 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.2.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.3.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-官方模块仓库的 Release 标题使用 `2.3.2`，标签使用 `8-2.3.2`，随 Release 上传 APK 并填写更新说明。
+官方模块仓库的 Release 标题使用 `2.3.3`，标签使用 `9-2.3.3`，随 Release 上传 APK 并填写更新说明。
 
 ## 📜 许可证
 

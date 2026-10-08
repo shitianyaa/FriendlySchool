@@ -49,6 +49,14 @@ package com.yiran.friendlyschool.targets;
  *   - 若 sessionStorage.state 因故一直未置位，伪造会一直生效，此时「我的」页
  *     会显示成「超級JM人」—— 这是本方案的回退形态。
  *   - 本模块外的其它 WebView（例如 App 内打开的外链页）不受影响。
+ *
+ * v2.3.3（三处修复，详见各自常量/方法的注释）：
+ *   - 回读校验改有界重试：服务端签到存在「写后读」传播延迟（实测 ~13s），原先只回读一次
+ *     会把已成功的签到误报成 VERIFY_FAIL（还会顺带错写 `__jmCheckin.failDay`）。
+ *   - 排队弹窗增加持久化：进程若在「同意18岁」置位前死亡（实测有只活 4s 的进程），
+ *     排队内容随进程消失 → 现落盘到 `__jmToast`，下次冷启动同一天补弹，跨天丢弃。
+ *   - 冷启动首页空白自愈：清空广告抽掉了 App 里 `coverOpen` 5→6 的广告桥，使一处自身竞态
+ *     约一半概率卡在空白 → 现由 `PATCH_JS` 里的 `MutationObserver`（事件驱动）检测并 reload 一次。
  */
 
 import android.content.Context;
@@ -147,6 +155,43 @@ public class JMComicTarget extends SchoolTargetBase {
             + "nf.__jmAdFree=1;W.fetch=nf}}catch(e){}"
             + "try{W.localStorage.setItem('__jmAdFree',JSON.stringify("
             + "{v:1,early:EARLY,rs:RS,stale:stale,t:Date.now()}))}catch(e){}"
+            // ---- 白屏自愈（v2.3.3）----
+            // 真机实测（2026-10-08）：约一半概率冷启动后首页空白（只有底栏、无 <header>）。
+            // 根因是 App 自身竞态：Main.tsx 的 coverOpen 只有 5 或 6 会渲染首页内容，
+            // 而从 5 到 6 靠 `(coverOpen===5 && adsFourCoverOpen && !mainStatus) <FourCover/>`
+            // （即官方那 ~3s 广告桥）或 Main.tsx 里 `else if(mainStatus) setCoverOpen(6)` 的 effect。
+            // 本 target 把广告清空 → adsFourCoverOpen=false → 那道广告桥被抽掉；此时若
+            // ThreeCover 的「同意18岁」用 400ms 延迟的过期闭包把 coverOpen 打回 5，就会卡死
+            // （covers=true 但 hdr=0，探针已证实）。点底栏其它页再回来能自愈，因为 Main 重挂载 effect 重跑。
+            // 这里用 MutationObserver（事件驱动、非轮询）检测该卡死态，命中就 reload 一次；
+            // sessionStorage.state 跨 reload 存活 → reload 后直接进首页、不重走封面。首页就绪即 disconnect。
+            // 去重守卫用**时间戳**而非布尔：只防「刚 reload 完又立刻 reload」的死循环（8s 窗口），
+            // 不用永久标志 —— 否则一次自愈后该 session 内再也不会自愈（2026-10-08 踩过：13:28
+            // 自愈一次后，后续每次冷启动的空白都不再触发）。
+            + "var _bf=false;try{var _lf=Number(W.sessionStorage.getItem('__jmBlankFired')||0);_bf=(Date.now()-_lf)<8000}catch(e){}"
+            + "if(!_bf){var _mo=null,_bt=null;"
+            + "var _isBlank=function(){try{"
+            + "if(String((W.location&&W.location.pathname)||'')!=='/')return false;"
+            + "if(!W.sessionStorage.getItem('state'))return false;"
+            + "if(document.querySelectorAll('header').length>0)return false;"
+            + "var t=(document.body&&document.body.innerText)||'';"
+            // 注意：**不能**用「加載中」当"仍在加载"的守卫 —— 真机实测卡死态里 App 的
+            // <Loading/> 会一直挂着「加載中…」文本，那道守卫反而会把要治的卡死态判成"不空白"
+            // 而永不触发（2026-10-08 踩过，见 Progress 记录）。
+            + "if(t.indexOf('\\u540c\\u610f')>=0)return false;"          // 同意（还在封面）
+            + "if(t.indexOf('\\u7981\\u6f2b\\u5929\\u5802')>=0)return false;"  // 禁漫天堂（ThreeCover 页脚）
+            + "if(t.indexOf('\\u9996\\u9801')<0)return false;"           // 首頁（底栏必须在）
+            + "return true}catch(e){return false}};"
+            + "var _cf=function(){try{if(_mo&&document.querySelectorAll('header').length>0){_mo.disconnect();_mo=null}}catch(e){}};"
+            + "var _act=function(){try{if(_bf)return;_cf();if(!_isBlank())return;"
+            + "_bf=true;try{if(_mo){_mo.disconnect();_mo=null}}catch(e){}"
+            + "try{W.sessionStorage.setItem('__jmBlankFired',String(Date.now()))}catch(e){}"
+            + "try{W.localStorage.setItem('__jmBlankAt',String(Date.now()))}catch(e){}"
+            + "W.location.reload()}catch(e){}};"
+            + "var _on=function(){try{if(_mo&&document.querySelectorAll('header').length>0){_mo.disconnect();_mo=null;return}"
+            + "if(_bt)clearTimeout(_bt);_bt=setTimeout(_act,500)}catch(e){}};"
+            + "try{_mo=new MutationObserver(_on);_mo.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}"
+            + "setTimeout(_act,4000)}"
             + "}catch(e){}})();";
 
     /**
@@ -228,6 +273,28 @@ public class JMComicTarget extends SchoolTargetBase {
     private static final String LS_CHECKIN = "__jmCheckin";
 
     /**
+     * 模块自己的「待弹提醒」暂存键（**App 从不读它**，与 `__jmAdFree`/`__jmCheckin` 同性质）。
+     *
+     * 为什么需要（v2.3.3）：`toast()` 只是**排队**，真正弹出要等 App 自己的同意位
+     * `sessionStorage.state` 置位（或采样链兜底）。若进程在置位前就被杀掉（实测有只活
+     * **4 秒**的进程），排队内容会随进程一起消失 —— 弹窗静默丢失。这里把排队内容写进
+     * 这个键，下次冷启动时**同一天**再补弹一次。
+     */
+    private static final String LS_TOAST = "__jmToast";
+
+    /**
+     * 回读校验的有界重试（v2.3.3）。
+     *
+     * 依据（2026-10-08 实测，n=1）：`daily_chk` 已回 `msg=Jcoin:10 EXP:10`（**成功**），
+     * 但 1 秒后回读 `/daily` 仍读不到 `signed:true`，直到 ~13 秒后才变 true ——
+     * 服务端签到存在「写后读」传播延迟。原先只回读一次就报 VERIFY_FAIL，会误报失败。
+     * 这里最多回读 VERIFY_RETRIES 次、间隔 VERIFY_GAP_MS（最坏 5×4s = 20s），任一读到 true 即通过。
+     * **只重读、不重发 `daily_chk`**（不会重复签到）；且只在首读为 false 时才进入重试（成功路径零开销）。
+     */
+    private static final int VERIFY_RETRIES = 5;
+    private static final long VERIFY_GAP_MS = 4000L;
+
+    /**
      * API 的共享密钥，逐字来自 App 自己的 assets/public/static/js（api/apiPaths.ts 的 token 字段）：
      *   Token    = md5(unix_ts + 这个串)
      *   回包 data = AES-256-ECB/PKCS7(base64)，密钥同上是同一个 md5 串的 UTF-8 字节
@@ -252,9 +319,10 @@ public class JMComicTarget extends SchoolTargetBase {
             + "try{mi=JSON.parse(l.getItem('memberInfo')||'{}')||{}}catch(e){}"
             + "var jw='';try{jw=JSON.parse(l.getItem('jwttoken')||'\"\"')||''}catch(e){}"
             + "var fd='';try{var o=JSON.parse(l.getItem('" + LS_CHECKIN + "')||'{}');fd=(o&&o.failDay)||''}catch(e){}"
+            + "var td='';var tday='';try{var o2=JSON.parse(l.getItem('" + LS_TOAST + "')||'{}');td=(o2&&o2.text)||'';tday=(o2&&o2.day)||''}catch(e){}"
             + "var cd=false;try{cd=!!window.sessionStorage.getItem('state')}catch(e){}"
             + "return JSON.stringify({apiUrl:l.getItem('apiUrl')||'',jwt:jw,lang:l.getItem('lang')||'TW',"
-            + "s:mi.s||'',uid:String(mi.uid||''),name:String(mi.username||''),covers:cd,failDay:fd});"
+            + "s:mi.s||'',uid:String(mi.uid||''),name:String(mi.username||''),covers:cd,failDay:fd,toast:td,toastDay:tday});"
             + "}catch(e){return JSON.stringify({err:String(e)})}})()";
 
     private volatile int samplesLeft = 0;
@@ -512,6 +580,9 @@ public class JMComicTarget extends SchoolTargetBase {
                     if (isRetry) {
                         log("checkin: 重试取会话成功（covers=" + sess.optBoolean("covers") + "）");
                     }
+                    // 上次冷启动排队了弹窗、但进程在「同意18岁」置位前就死了 → 内容还在 localStorage。
+                    // 同一天则补弹一次（跨天丢弃：那条提醒说的是过去某天的事，没有意义）。
+                    restorePendingToast(sess, wv);
                     // 调试开关：只在没有真内容排队时插一条样例，真弹窗内容优先
                     if (DEBUG_TOAST_ONCE && !debugToastShown && pendingToast.get() == null) {
                         debugToastShown = true;
@@ -608,11 +679,39 @@ public class JMComicTarget extends SchoolTargetBase {
             }
         }
 
-        // 2) 回读校验：服务端说的不算，格子变 true 才算
-        JSONObject r3 = api(sess, "daily?user_id=" + uid, null);
-        JSONObject d3 = asObject(r3 == null ? null : r3.opt("data"));
-        JSONObject e3 = d3 == null ? null : findDay(d3.optJSONArray("record"), today);
-        if (e3 != null && e3.optBoolean("signed")) {
+        // 2) 回读校验：服务端说的不算，格子变 true 才算。
+        //
+        //    有界重试（v2.3.3）：服务端存在「写后读」传播延迟（实测端到端 ~13s），
+        //    只回读一次会误报 VERIFY_FAIL（见 VERIFY_RETRIES 注释）。这里最多回读
+        //    VERIFY_RETRIES 次、每次间隔 VERIFY_GAP_MS；任一读到 signed=true 即通过。
+        //    只在首读为 false 时才进入重试 —— 成功路径零额外开销。
+        JSONObject r3 = null;
+        JSONObject d3 = null;
+        boolean verified = false;
+        for (int attempt = 0; attempt <= VERIFY_RETRIES; attempt++) {
+            if (attempt > 0) {
+                log("checkin: verify retry " + attempt + "/" + VERIFY_RETRIES
+                        + "（服务端可能还没传播，稍后再读）");
+                try {
+                    Thread.sleep(VERIFY_GAP_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            r3 = api(sess, "daily?user_id=" + uid, null);
+            d3 = asObject(r3 == null ? null : r3.opt("data"));
+            JSONObject e3 = d3 == null ? null : findDay(d3.optJSONArray("record"), today);
+            if (e3 != null && e3.optBoolean("signed")) {
+                verified = true;
+                if (attempt > 0) {
+                    log("checkin: verify retry 成功（第 " + attempt + " 次重读读到 signed=true）");
+                }
+                break;
+            }
+        }
+
+        if (verified) {
             log("checkin: VERIFY_OK 已确认今天（" + today + "）签到，进度=" + d3.optString("currentProgress", "?"));
             if (justSigned) {
                 // 弹窗文案：服务端返回的原文（如 `Jcoin:10 EXP:10`）本身看不出是什么，加前缀
@@ -622,7 +721,7 @@ public class JMComicTarget extends SchoolTargetBase {
                 }
             }
         } else {
-            log("checkin: VERIFY_FAIL —— 服务端未记录今天的签到！回读=" + brief(r3));
+            log("checkin: VERIFY_FAIL —— 重试 " + VERIFY_RETRIES + " 次后服务端仍未记录今天签到！回读=" + brief(r3));
             // 失败弹窗一天只弹一次：靠模块自己的 localStorage 键记着（App 不读它）
             if (today.equals(sess.optString("failDay"))) {
                 log("checkin: 失败弹窗今天（" + today + "）已弹过，不再重复");
@@ -655,6 +754,10 @@ public class JMComicTarget extends SchoolTargetBase {
      * 好几层封面，在封面阶段弹会盖在封面页上、用户正在点 ❌ 和同意，基本看不到。
      * 所以等 **App 自己的同意位** `sessionStorage.state === 'true'`（ThreeCover.tsx:79 /
      * FourCover.tsx:64 写入）置位后再弹 —— 用 App 的信号，不自己造延时。
+     *
+     * v2.3.3 追加：排队的同时把内容**持久化**到 {@link #LS_TOAST}。原因是实测有进程
+     * 只活 4 秒就死（同意位置位之前），排队内容随进程一起没了 —— 弹窗静默丢失。
+     * 落盘后，下次冷启动由 {@link #restorePendingToast} 在同一天补弹。
      */
     private void toast(WebView wv, String text) {
         if (!TOAST_CHECKIN) {
@@ -663,6 +766,7 @@ public class JMComicTarget extends SchoolTargetBase {
         }
         pendingToast.set(text);
         log("checkin: toast 排队 -> " + text);
+        writePendingToast(wv, text);
         flushToast(wv, coversDoneSeen);
     }
 
@@ -674,6 +778,8 @@ public class JMComicTarget extends SchoolTargetBase {
      * 所以用 WebView.post 回主线程。弹窗失败不能影响签到本身，所以单独 try/catch，
      * 失败也出声。无论弹不弹都会落一行日志 —— 本机 logcat 是空的，
      * 「弹了没」必须有文件证据。
+     *
+     * 弹成功即清除 {@link #LS_TOAST} 的持久化暂存（否则下次冷启动会重复补弹）。
      */
     private void flushToast(final WebView wv, boolean coversDone) {
         if (!TOAST_CHECKIN || wv == null || !coversDone) {
@@ -696,9 +802,85 @@ public class JMComicTarget extends SchoolTargetBase {
                 }
             });
             log("checkin: toast -> " + text);
+            clearPendingToast(wv);
         } catch (Throwable t) {
             pendingToast.set(text);      // 派发失败就放回去，下一次 tick 还会试
             log("checkin: toast 派发失败 -> " + t);
+        }
+    }
+
+    /**
+     * 冷启动恢复：把上次排队、但进程早死没弹出去的提醒补排一次。
+     *
+     * 只在 `day == 今天` 时恢复（跨天丢弃）—— 那条提醒说的是过去某天的事，补弹没意义。
+     * 由 {@link #harvestAndRun} 在取到会话后调用（那里已经 read 过 CHECKIN_JS）。
+     */
+    private void restorePendingToast(final JSONObject sess, final WebView wv) {
+        if (!TOAST_CHECKIN) {
+            return;
+        }
+        String text = sess.optString("toast");
+        if (text.length() == 0) {
+            return;
+        }
+        String day = sess.optString("toastDay");
+        String today = new SimpleDateFormat("dd", Locale.US).format(new Date());
+        if (!today.equals(day)) {
+            log("checkin: 发现上次未弹出的提醒（day=" + day + "），非今天（" + today + "），丢弃");
+            clearPendingToast(wv);
+            return;
+        }
+        if (pendingToast.get() == null) {
+            pendingToast.set(text);
+            log("checkin: 恢复上次未弹出的提醒 -> " + text);
+            flushToast(wv, coversDoneSeen);
+        }
+    }
+
+    /** 把排队内容持久化到 {@link #LS_TOAST}（App 不读它）。失败只落日志，不影响签到。 */
+    private void writePendingToast(final WebView wv, final String text) {
+        if (wv == null) {
+            return;
+        }
+        final String day = new SimpleDateFormat("dd", Locale.US).format(new Date());
+        try {
+            wv.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        wv.evaluateJavascript(
+                                "try{localStorage.setItem('" + LS_TOAST + "',JSON.stringify({text:"
+                                        + JSONObject.quote(text) + ",day:'" + day + "',t:Date.now()}))}catch(e){}",
+                                null);
+                    } catch (Throwable t) {
+                        log("checkin: 写 " + LS_TOAST + " 失败 -> " + t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            log("checkin: 写 " + LS_TOAST + " 派发失败 -> " + t);
+        }
+    }
+
+    /** 清除持久化暂存（弹过了 / 跨天丢弃）。 */
+    private void clearPendingToast(final WebView wv) {
+        if (wv == null) {
+            return;
+        }
+        try {
+            wv.post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        wv.evaluateJavascript(
+                                "try{localStorage.removeItem('" + LS_TOAST + "')}catch(e){}", null);
+                    } catch (Throwable t) {
+                        log("checkin: 清 " + LS_TOAST + " 失败 -> " + t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            log("checkin: 清 " + LS_TOAST + " 派发失败 -> " + t);
         }
     }
 
