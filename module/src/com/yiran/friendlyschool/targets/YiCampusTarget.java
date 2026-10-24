@@ -114,8 +114,9 @@ public class YiCampusTarget extends SchoolTargetBase {
      */
     private void installZjGuard() {
         final String prefix = "com.zj.";
+        // 展示面：Activity.onCreate after -> finish()。不能 skip：不调 super 会
+        // SuperNotCalledException 崩溃，after+finish 与通用开屏出口同模式。
         try {
-            // 展示面：Activity.onCreate after -> finish()（after 拦截与 CommandActivity 同模式）
             Method actOnCreate = Xp.findMethod(android.app.Activity.class, "onCreate",
                     android.os.Bundle.class);
             if (actOnCreate == null) {
@@ -132,8 +133,12 @@ public class YiCampusTarget extends SchoolTargetBase {
                 }
                 return result;
             });
-
-            // 下载面：Service.onCreate after -> stopSelf()；onStartCommand before -> 跳过执行
+            log("hook installed: ZJ guard[Activity] onCreate -> finish()");
+        } catch (Throwable t) {
+            log("ZJ guard[Activity] FAILED: " + t);
+        }
+        // 下载面：Service.onCreate after -> stopSelf()
+        try {
             Method svcOnCreate = Xp.findMethod(android.app.Service.class, "onCreate");
             if (svcOnCreate == null) {
                 throw new NoSuchMethodException("android.app.Service#onCreate()");
@@ -149,6 +154,12 @@ public class YiCampusTarget extends SchoolTargetBase {
                 }
                 return result;
             });
+            log("hook installed: ZJ guard[Service.onCreate] -> stopSelf()");
+        } catch (Throwable t) {
+            log("ZJ guard[Service.onCreate] FAILED: " + t);
+        }
+        // 下载面：Service.onStartCommand before -> 跳过执行
+        try {
             Method svcStart = Xp.findMethod(android.app.Service.class, "onStartCommand",
                     android.content.Intent.class, int.class, int.class);
             if (svcStart == null) {
@@ -160,13 +171,15 @@ public class YiCampusTarget extends SchoolTargetBase {
                 if (self != null && self.getClass().getName().startsWith(prefix)) {
                     logOnce("ZJ guard: 拦截下载 Service#onStartCommand "
                             + self.getClass().getName());
-                    return 0; // START_STICKY_COMPATIBILITY：不做任何下载工作也不自动重启
+                    // START_NOT_STICKY(2)：进程被杀后不重建；跳过原实现不做任何下载工作
+                    //（AOSP：0=STICKY_COMPATIBILITY 并非"不重启"，2 才是不重建）
+                    return android.app.Service.START_NOT_STICKY;
                 }
                 return chain.proceed();
             });
-            log("hook installed: ZJ guard x3（Activity/Service 前缀 com.zj.）");
+            log("hook installed: ZJ guard[Service.onStartCommand] -> START_NOT_STICKY");
         } catch (Throwable t) {
-            log("installZjGuard FAILED: " + t);
+            log("ZJ guard[Service.onStartCommand] FAILED: " + t);
         }
     }
 

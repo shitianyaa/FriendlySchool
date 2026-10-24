@@ -557,14 +557,25 @@ public class WakeUpTarget extends SchoolTargetBase {
         }
     }
 
+    /** 已挂 no-op 的任务键（任务名@类名）：重复构造不重复挂，避免 Xp.HOOKS 堆积死句柄。 */
+    private final java.util.Set<String> taskKillHooked =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+
     /** 对具体任务类的无参 run() 挂 no-op；带 id（同 id 原子替换），重复构造不会重复挂。 */
     private void hookTaskRunNoop(String taskName, Class<?> taskClass) {
         try {
+            String key = taskName + "@" + taskClass.getName();
+            synchronized (taskKillHooked) {
+                if (!taskKillHooked.add(key)) {
+                    return;
+                }
+            }
             for (java.lang.reflect.Method m : taskClass.getDeclaredMethods()) {
                 if (!"run".equals(m.getName()) || m.getParameterTypes().length != 0) {
                     continue;
                 }
-                Xp.hook(m, "C-task-kill:" + taskName, chain -> {
+                // id 用完整键：同名任务换实现类时，同 id 挂不同方法的行为未定义
+                Xp.hook(m, "C-task-kill:" + key, chain -> {
                     logOnce("C组 task kill: " + taskName + " -> " + taskClass.getName() + "#run");
                     return null;
                 });
@@ -597,7 +608,9 @@ public class WakeUpTarget extends SchoolTargetBase {
      * 2. 生命周期收口：onCreateView 返回后隐藏；onViewCreated / onResume 重隐
      *    （覆盖简洁模式切换等导致的视图重建；若真机验证发现未覆盖的原地翻回路径再补）。
      * 3. oo0O 访问器兜底：6.6.0 语义已核实（scheduleMine 的 Lazy 访问器），
-     *    after + post 设 GONE 赢 setVisibility 竞态；下版本换名时仅这条 FAILED。
+     *    after + post 设 GONE 赢 setVisibility 竞态；返回视图须与 scheduleMine
+     *    资源 id 核验一致才隐藏——同名换人时告警跳过（不核验会静默藏掉功能按钮），
+     *    下版本彻底换名时这条打「访问器不存在」。
      * 4. 礼包加载器按签名动态发现：扫 ScheduleFragment 声明方法里参数恰为
      *    (Bannerconf$HomeSourceBanner, String)、返回 void 的候选，全部 no-op。
      *    650/660 实测都恰有 1 个（650=o00O0Ooo / 660=o00oOOo）——它会在服务端 banner
@@ -606,10 +619,16 @@ public class WakeUpTarget extends SchoolTargetBase {
      */
     private void installScheduleTopIconHider(ClassLoader cl) {
         final String cls = APP + "schedule.ScheduleFragment";
+        Class<?> fragCls;
         try {
-            Class<?> fragCls = Xp.findClass(cls, cl);
+            fragCls = Xp.findClass(cls, cl);
+        } catch (Throwable t) {
+            log("L6/L9 FAILED: " + cls + " 类不存在——" + t);
+            return;
+        }
 
-            // 1+2. 生命周期收口
+        // 1. 生命周期收口：onCreateView 返回后隐藏（首次隐藏点）
+        try {
             java.lang.reflect.Method cv = Xp.findMethod(fragCls, "onCreateView",
                     android.view.LayoutInflater.class, android.view.ViewGroup.class, Bundle.class);
             if (cv == null) {
@@ -623,7 +642,12 @@ public class WakeUpTarget extends SchoolTargetBase {
                 return result;
             });
             log("hook installed: L6/L9 onCreateView 收口");
+        } catch (Throwable t) {
+            log("L6/L9 onCreateView 收口 FAILED: " + t);
+        }
 
+        // 2. onViewCreated 重隐
+        try {
             java.lang.reflect.Method vc = Xp.findMethod(fragCls, "onViewCreated",
                     android.view.View.class, Bundle.class);
             if (vc == null) {
@@ -637,7 +661,12 @@ public class WakeUpTarget extends SchoolTargetBase {
                 return result;
             });
             log("hook installed: L6/L9 onViewCreated 重隐");
+        } catch (Throwable t) {
+            log("L6/L9 onViewCreated 重隐 FAILED: " + t);
+        }
 
+        // 3. onResume 重隐（覆盖简洁模式切换等导致的视图重建）
+        try {
             java.lang.reflect.Method rs = Xp.findMethod(fragCls, "onResume");
             if (rs == null) {
                 throw new NoSuchMethodException(cls + "#onResume()");
@@ -656,7 +685,7 @@ public class WakeUpTarget extends SchoolTargetBase {
             });
             log("hook installed: L6/L9 onResume 重隐");
         } catch (Throwable t) {
-            log("L6/L9 生命周期收口 FAILED: " + t);
+            log("L6/L9 onResume 重隐 FAILED: " + t);
         }
 
         // 3. oo0O 访问器兜底（失败不致命：资源 id 方案仍在）
@@ -669,14 +698,34 @@ public class WakeUpTarget extends SchoolTargetBase {
                     Object result = chain.proceed();
                     if (result instanceof android.view.View) {
                         final android.view.View v = (android.view.View) result;
-                        v.setVisibility(android.view.View.GONE);
-                        v.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                v.setVisibility(android.view.View.GONE);
+                        // 身份核验：oo0O 是混淆名，同名可能换给别的视图访问器；
+                        // 与 scheduleMine 资源 id 一致才隐藏，否则告警跳过（防静默藏掉功能按钮）
+                        int id = mineIconId;
+                        if (id <= 0) { // 与主路径 hideTopIconById 同款重试语义
+                            id = v.getResources().getIdentifier(
+                                    MINE_RES_NAME, "id", v.getContext().getPackageName());
+                            mineIconId = id;
+                            if (id != 0) {
+                                log("L6/L9 自检: " + MINE_RES_NAME + " id=0x"
+                                        + Integer.toHexString(id));
                             }
-                        });
-                        logOnce("L6 hit: oo0O 访问器兜底 -> GONE");
+                        }
+                        if (id == 0) {
+                            logOnce("L6 兜底: scheduleMine id 解析为 0，无法核验 oo0O 返回视图身份，本条不隐藏");
+                        } else if (v.getId() == id) {
+                            v.setVisibility(android.view.View.GONE);
+                            v.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    v.setVisibility(android.view.View.GONE);
+                                }
+                            });
+                            logOnce("L6 hit: oo0O 访问器兜底（id 已核验=scheduleMine）-> GONE");
+                        } else {
+                            logOnce("L6 告警: oo0O 返回视图 id=0x" + Integer.toHexString(v.getId())
+                                    + " ≠ scheduleMine(0x" + Integer.toHexString(id)
+                                    + ")，疑似同名换人，跳过隐藏");
+                        }
                     }
                     return result;
                 });
@@ -688,7 +737,6 @@ public class WakeUpTarget extends SchoolTargetBase {
 
         // 4. 礼包加载器：签名 (HomeSourceBanner, String) -> void 动态发现
         try {
-            Class<?> fragCls = Xp.findClass(cls, cl);
             Class<?> bannerItem = Xp.findClass(APP + "aaa.model.Bannerconf$HomeSourceBanner", cl);
             int candidates = 0;
             StringBuilder names = new StringBuilder();
@@ -1379,17 +1427,30 @@ public class WakeUpTarget extends SchoolTargetBase {
     private void installTabTrim(ClassLoader cl) {
         // adapter 双名回退：6.6.0 起标签构建搬进 ScheduleActivity.onCreate
         // （new o0OO00Oo.OooOOO0(fm, list)），6.5.0 为 o0O0OOoo.OooOOO。
+        // R8 同名换人是常态：名字命中还须构造器形状（FragmentManager+List）相符
+        // 才接受，不符试下一候选——防误挂换人类的构造器并对其 List 元素乱反射。
         // 原生开关 o0O0o0O.o00oO0o#OooOOOo 在 6.6.0 类已消失，List 过滤本就覆盖
         // assistant，不再单独挂（6.5.0 上少一条双保险，裁剪结果不变）。
-        String adapterName = "o0OO00Oo.OooOOO0";
-        Class<?> adapter = Xp.findClassIfExists(adapterName, cl);
-        if (adapter == null) {
-            adapterName = "o0O0OOoo.OooOOO";
-            adapter = Xp.findClassIfExists(adapterName, cl);
+        String[] adapterCandidates = {"o0OO00Oo.OooOOO0", "o0O0OOoo.OooOOO"};
+        Class<?> adapter = null;
+        String adapterName = null;
+        for (String cand : adapterCandidates) {
+            Class<?> c = Xp.findClassIfExists(cand, cl);
+            if (c == null) {
+                continue;
+            }
+            if (!AdapterCtorShape.hasFmListCtor(c, "androidx.fragment.app.FragmentManager")) {
+                log("标签裁剪: 候选 " + cand
+                        + " 存在但形状校验未通过（无 FragmentManager+List 构造器或枚举失败），试下一个");
+                continue;
+            }
+            adapter = c;
+            adapterName = cand;
+            break;
         }
         if (adapter == null) {
-            log("标签裁剪 hook FAILED: adapter 双名都找不到"
-                    + "（o0OO00Oo.OooOOO0 / o0O0OOoo.OooOOO）");
+            log("标签裁剪 hook FAILED: adapter 双名都不可用（不存在或形状不符："
+                    + "o0OO00Oo.OooOOO0 / o0O0OOoo.OooOOO）");
             return;
         }
         // 之前用 findAndHookMethod(..., "<init>", FragmentManager, List) 会报
