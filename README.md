@@ -42,7 +42,7 @@
 | 应用 | 已分析 / 验证的版本 |
 |---|---|
 | 易校园 | 7.7.8 |
-| WakeUp 课程表 | 6.5.0（versionCode 540） |
+| WakeUp 课程表 | 6.5.0–6.6.0（versionCode 540–550） |
 | JMComic3 | 2.1.11 |
 | 光影边框 | 3.4.5（versionCode 34500） |
 | 酷安 | 16.6.4（versionCode 2609291） |
