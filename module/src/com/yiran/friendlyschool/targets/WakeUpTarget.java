@@ -607,10 +607,11 @@ public class WakeUpTarget extends SchoolTargetBase {
      *    两版本实测都在；解析结果缓存 + 自检日志，解析为 0 出声）。
      * 2. 生命周期收口：onCreateView 返回后隐藏；onViewCreated / onResume 重隐
      *    （覆盖简洁模式切换等导致的视图重建；若真机验证发现未覆盖的原地翻回路径再补）。
-     * 3. oo0O 访问器兜底：6.6.0 语义已核实（scheduleMine 的 Lazy 访问器），
-     *    after + post 设 GONE 赢 setVisibility 竞态；返回视图须与 scheduleMine
-     *    资源 id 核验一致才隐藏——同名换人时告警跳过（不核验会静默藏掉功能按钮），
-     *    下版本彻底换名时这条打「访问器不存在」。
+     * 3. oo0O 访问器兜底（带身份核验）：6.6.0 真机实测 oo0O 返回的是
+     *    scheduleImport（0x7f0908c0）而非 scheduleMine（0x7f0908c4）——早前
+     *    「scheduleMine 的 Lazy 访问器」判断系误读，未核验版本因此真把导入
+     *    按钮藏了（2026-10-24 设备日志实证）。现在返回视图与 scheduleMine 资源
+     *    id 一致才隐藏，不一致告警跳过；下版本彻底换名时这条打「访问器不存在」。
      * 4. 礼包加载器按签名动态发现：扫 ScheduleFragment 声明方法里参数恰为
      *    (Bannerconf$HomeSourceBanner, String)、返回 void 的候选，全部 no-op。
      *    650/660 实测都恰有 1 个（650=o00O0Ooo / 660=o00oOOo）——它会在服务端 banner
