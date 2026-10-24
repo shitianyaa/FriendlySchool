@@ -10,7 +10,7 @@ versionCode：`10`。
 
 - **WakeUp 课程表：适配 6.6.0（versionCode 550）**。6.6.0 的 R8 把混淆名整体重排（类名大体存活但方法名「同名换人」），按混淆名挂钩的底部标签裁剪、顶栏图标、底层任务三组 hook 失效（表现：底部「学习/表助手/我的」标签回来了、顶栏礼包图标回来了）。改为按**稳定锚点**动态发现，锚点不随混淆重排变化：
   - **底部标签裁剪**：adapter 双名回退（6.6.0 `o0OO00Oo.OooOOO0`，6.5.0 `o0O0OOoo.OooOOO`），按构造器 List 参数过滤的机制不变；
-  - **顶栏图标**（简洁模式「我的」人形图标 + 顶栏礼包图标）：改走**资源 id**（R8 不重排 arsc 资源名，`scheduleMine`/`scheduleIcon` 两版本实测都在）+ ScheduleFragment 生命周期收口（onCreateView / onViewCreated / onResume 三点重隐）+ `oo0O` 访问器兜底；礼包加载器按签名 `(HomeSourceBanner, String)→void` 动态发现并 no-op（不 no-op 它，服务端 banner 到达时会把图标翻回 VISIBLE）；
+  - **顶栏图标**（简洁模式「我的」人形图标 + 顶栏礼包图标）：改走**资源 id**（R8 不重排 arsc 资源名，`scheduleMine`/`scheduleIcon` 两版本实测都在）+ ScheduleFragment 生命周期收口（onCreateView / onViewCreated / onResume 三点重隐）+ `oo0O` 访问器兜底（返回视图须与 `scheduleMine` 资源 id 核验一致才隐藏——该混淆名在 6.5.0/6.6.0 已分别指向不同视图，不核验会误藏功能按钮）；礼包加载器按签名 `(HomeSourceBanner, String)→void` 动态发现并 no-op（不 no-op 它，服务端 banner 到达时会把图标翻回 VISIBLE）；
   - **底层任务**（广告SDK / 广告配置 / OAID / 设备指纹 / 埋点 / 远程与内部日志 / 支付 / 推送 / DProtect 共 10 项）：不再按混淆类名挂钩，改为挂 launchmanager 基类 `Task` 构造器、按**任务名字符串黑名单**（App 自有语义，R8 不动字符串常量）动态 no-op 命中任务的 `run()`。
   - 双版本兼容：以上机制在 6.5.0（versionCode 540）与 6.6.0（550）上均可工作；每条 hook 装不上都有 FAILED 日志，冷启动一次即可定位。
 - **易校园：新增 ZJ 广告 SDK 守卫**。7.8.7 的 ZJ SDK 首次在 manifest 挂出全套广告组件（插屏/激励/开屏/H5/摇一摇/下载弹窗/反馈页 + 下载服务），其代码在运行时解密的插件 jar 里、静态不可见。守卫按**运行时类名前缀 `com.zj.`** 拦截（Activity onCreate 后 finish、Service onCreate 后 stopSelf、onStartCommand 跳过），不提前加载任何 ZJ 类，对 SDK 后续加组件免疫；每次命中打日志报具体类名。不拦插件加载（避免破坏宿主状态机）。
