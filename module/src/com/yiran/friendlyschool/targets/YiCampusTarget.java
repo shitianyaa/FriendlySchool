@@ -94,6 +94,93 @@ public class YiCampusTarget extends SchoolTargetBase {
         installAssetDefense();
         installPrivacyDefense(cl);
         installClipboardDefense();
+        installZjGuard();
+    }
+
+    /**
+     * ZJ 广告 SDK 守卫（2026-10-24，随 7.8.7 适配勘察新增）。
+     *
+     * 7.8.7 的 ZJ SDK（com.zj.zjsdkplug 为其动态插件 dex，assets/Z<32hex>J.jar）首次在
+     * manifest 挂出全套广告组件：插屏/激励/开屏/H5/摇一摇（SensorTransparentAdActivity）/
+     * 下载弹窗/反馈页共 7 个 Activity + 下载 Service 群。其代码在运行时才解密可见，静态
+     * 不可见 —— 所以按**运行时类名前缀匹配**拦截，不提前加载任何 ZJ 类；zjsdkplug 整包
+     * 皆广告功能、com.zj. 前缀不可能是易校园自有代码，前缀匹配对 SDK 后续加组件免疫。
+     *
+     * 兼作**观测哨兵**：截至 7.8.7 尚未观测到 ZJ 实际出广告，是否激活由命中日志回答
+     * （每次命中记录具体类名，logOnce 防刷屏）。
+     *
+     * 明确不做：不拦插件 jar 加载（会破坏宿主状态机——JM v1.0 开屏卡死教训）；
+     * 不拦 receiver（活动/服务被断后它们没有输入源）。
+     */
+    private void installZjGuard() {
+        final String prefix = "com.zj.";
+        // 展示面：Activity.onCreate after -> finish()。不能 skip：不调 super 会
+        // SuperNotCalledException 崩溃，after+finish 与通用开屏出口同模式。
+        try {
+            Method actOnCreate = Xp.findMethod(android.app.Activity.class, "onCreate",
+                    android.os.Bundle.class);
+            if (actOnCreate == null) {
+                throw new NoSuchMethodException("android.app.Activity#onCreate(Bundle)");
+            }
+            Xp.hook(actOnCreate, chain -> {
+                Object result = chain.proceed();
+                Object self = chain.getThisObject();
+                if (self instanceof Activity
+                        && self.getClass().getName().startsWith(prefix)) {
+                    logOnce("ZJ guard: 拦截广告 Activity -> finish() "
+                            + self.getClass().getName());
+                    ((Activity) self).finish();
+                }
+                return result;
+            });
+            log("hook installed: ZJ guard[Activity] onCreate -> finish()");
+        } catch (Throwable t) {
+            log("ZJ guard[Activity] FAILED: " + t);
+        }
+        // 下载面：Service.onCreate after -> stopSelf()
+        try {
+            Method svcOnCreate = Xp.findMethod(android.app.Service.class, "onCreate");
+            if (svcOnCreate == null) {
+                throw new NoSuchMethodException("android.app.Service#onCreate()");
+            }
+            Xp.hook(svcOnCreate, chain -> {
+                Object result = chain.proceed();
+                Object self = chain.getThisObject();
+                if (self instanceof android.app.Service
+                        && self.getClass().getName().startsWith(prefix)) {
+                    logOnce("ZJ guard: 拦截下载 Service -> stopSelf() "
+                            + self.getClass().getName());
+                    ((android.app.Service) self).stopSelf();
+                }
+                return result;
+            });
+            log("hook installed: ZJ guard[Service.onCreate] -> stopSelf()");
+        } catch (Throwable t) {
+            log("ZJ guard[Service.onCreate] FAILED: " + t);
+        }
+        // 下载面：Service.onStartCommand before -> 跳过执行
+        try {
+            Method svcStart = Xp.findMethod(android.app.Service.class, "onStartCommand",
+                    android.content.Intent.class, int.class, int.class);
+            if (svcStart == null) {
+                throw new NoSuchMethodException(
+                        "android.app.Service#onStartCommand(Intent,int,int)");
+            }
+            Xp.hook(svcStart, chain -> {
+                Object self = chain.getThisObject();
+                if (self != null && self.getClass().getName().startsWith(prefix)) {
+                    logOnce("ZJ guard: 拦截下载 Service#onStartCommand "
+                            + self.getClass().getName());
+                    // START_NOT_STICKY(2)：进程被杀后不重建；跳过原实现不做任何下载工作
+                    //（AOSP：0=STICKY_COMPATIBILITY 并非"不重启"，2 才是不重建）
+                    return android.app.Service.START_NOT_STICKY;
+                }
+                return chain.proceed();
+            });
+            log("hook installed: ZJ guard[Service.onStartCommand] -> START_NOT_STICKY");
+        } catch (Throwable t) {
+            log("ZJ guard[Service.onStartCommand] FAILED: " + t);
+        }
     }
 
     private void installShellDefense() {

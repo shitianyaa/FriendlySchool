@@ -29,7 +29,10 @@ import java.lang.reflect.Field;
  * 设计原则：只关掉 App 自己的“要不要展示”决策，不替换数据、不伪造账号状态、不碰 SDK 内部。
  * 唯一例外是下方的 V 组：本地把会员判断放行（夜间模式、简洁模式、皮肤预览在 6.5.0 里都是
  * 会员功能，不放行就没法用）。放行只作用于**本地展示与本地偏好**，服务端账号字段一律不修改。
- * 每一处 hook 的调用方都已在样本 6.5.0 (versionCode 540) 上静态确认过：
+ * 每一处 hook 的锚点都已在样本 6.5.0 (versionCode 540) 与 6.6.0 (550) 上静态确认过。
+ * 6.6.0 的 R8 把混淆名整体重排（同名方法被换给别的实现），所以凡是必须落在
+ * 混淆符号上的 hook 都改成了按稳定锚点动态发现，锚点稳定性从高到低：
+ * 资源名（arsc 不被 R8 重排）> 可读类名/框架方法名 > 字符串常量 > 签名形状 > 混淆名（仅兜底）。
  *
  *   E1 aaa.utils.OooOOOO.OooO0OO()Z   ← 仅被 SplashActivity 调用          → 开屏广告
  *   E2 aaa.utils.OooOOOO.OooO00o()Z   ← 仅被 aaa.utils.OooOO0$OooO00o 调用 → 热启动插播广告
@@ -41,9 +44,17 @@ import java.lang.reflect.Field;
  *   L1 同一个 Activity.onCreate 钩子里的类名判定 (aaa.activity.login.*)      → 免登录（不弹登录页）
  *   L2 aaa.widget.MineNewUserLoginView.refreshLoginUI/refreshUnLoginUI      → 隐藏“我的”页登录卡片
  *   L3 com.dx.common.ui.dialog.CommonDialog.show + 文案匹配                → 会员/登录提示弹窗（单点覆盖全部，含课表页“简洁模式为VIP权益…去开通”）
- *   L4 o0O0OOoo.OooOOO 全构造器 + List 过滤                              → 剪掉“学习/表助手/我的”底部标签
+ *   L4 底部标签 adapter 全构造器 + List 过滤（6.6.0 为 o0OO00Oo.OooOOO0，6.5.0 为
+ *      o0O0OOoo.OooOOO，双名回退；tab 构建在 ScheduleActivity.onCreate L2088-2131）
+ *      → 剪掉“学习/表助手/我的”底部标签
  *   L5 mine.MineActivity                                                  → 堵死“我的”页的其它入口（简洁模式右上角那个图标开的就是它）
- *   L6 ScheduleFragment.oo0O()                                            → 把简洁模式右上角的“我的”图标也隐掉
+ *   L6/L9 顶栏图标改走**资源 id**：ScheduleFragment 生命周期收口（onCreateView/
+ *      onViewCreated/onResume 三点重隐）+ getIdentifier("scheduleMine"/"scheduleIcon")
+ *      + oo0O 访问器兜底（6.6.0 语义已核实；下版本换名只损失这一条兜底）
+ *      + 礼包加载器按签名 (HomeSourceBanner, String)→void 动态发现并 no-op
+ *        （6.6.0 实名 o00oOOo、650 实名 o00O0Ooo——不再按混淆方法名挂钩，
+ *         不 no-op 它则服务端 banner 到达时图标会被 setVisibility(VISIBLE) 翻回）
+ *      → 隐掉简洁模式右上角“我的”人形图标与顶栏礼包/营销图标
  *   L7 settings.ScheduleNotifyActivity                                    → 隐掉“普通提醒”（实为推送提醒 pushNotifyLayout，需登录）
  *   L8 widget.MainAiTitleTabView$OooO0OO.onApplyWindowInsets              → 把底栏调高（高度由这个 insets 监听器写死为 44dp+inset）
  *   V1 aaa.utils.o00O0000.OooOOO0()Z   （isVip，21 个调用点）            → 本地解锁会员门禁
@@ -51,6 +62,13 @@ import java.lang.reflect.Field;
  *   V3 utils.ScheduleSpUtils.OooO0oo(I)V（dark_model 写）               → 改写本地键
  *   V4 utils.ScheduleSpUtils.OooO0o()Z  （isSimpleModel 读）             → 改读本地键
  *   V5 utils.ScheduleSpUtils.OooO(Z)V   （simple_model 写）              → 改写本地键
+ *   C组 launchmanager 基类 Task 构造器挂钩（install() 的 attach 相位，早于任何任务构造）
+ *      + 任务名字符串黑名单（App 自有语义，R8 不动字符串常量；660 实测 10 个全在）
+ *      → 动态 no-op 命中任务的 run()：广告SDK/广告配置/OAID/设备指纹/埋点/远程日志/
+ *        内部日志/支付/推送/DProtect 共 10 项（6.5.0 的 C1-C12 按混淆类名的挂钩全部退役）
+ *   C3 com.kuaishou.weapon.p0.{dg, WeaponHI} 全方法置空（类名两版本一致）
+ *   C7 com.fastad.* 四网盟 init（可读方法名）
+ *   C8 com.kwad.sdk.api.KsAdSDK init/start（可读方法名）
  *
  * 明确不做的三件事，以及原因：
  *   - 不改 UserInfo.vipStatus / vipEndTime / isPermanentVip。这些字段来自服务端
@@ -113,19 +131,31 @@ public class WakeUpTarget extends SchoolTargetBase {
     private static final String MineActivity = APP + "mine.MineActivity";
 
     /**
-     * L6：简洁模式右上角的“我的”人形图标（id = scheduleMine）。
-     * ScheduleFragment.oo0O() 是它的访问器，开关简洁模式的方法会调它。
-     * 在访问器返回后用 post 设 GONE，让改动落在下一帧，盖过调用方随后的 setVisibility。
+     * L6：简洁模式右上角的“我的”人形图标（资源名 scheduleMine）。
+     * 6.6.0 起不再按混淆方法名挂钩（6.5.0 的访问器 oo0O 在 6.6.0 虽语义未变，
+     * 但同名换人是常态）：改为资源 id 隐藏 —— R8 不重排 arsc 资源名，
+     * 两版本实测 scheduleMine 都在。可见 installScheduleTopIconHider。
      */
     private static final boolean HIDE_SCHEDULE_MINE_ICON = true;
 
     /**
-     * L9：顶栏礼包/营销图标（id = scheduleIcon，对应方法 o00OO0o）。
-     * 点击后打开营销活动 H5（o0oOo0O0）。通过拦截访问器设 GONE、拦截数据装载
-     * o00O0Ooo 为 DO_NOTHING、拦截营销入口 o00oO0O0 以及拦截模式切换 o00O0OO0/o00O00o0
-     * 防止被重设为 VISIBLE，彻底清除顶部工具栏中的礼包图标，同时断掉浮窗商城与信息流广告。
+     * L9：顶栏礼包/营销图标（资源名 scheduleIcon）。
+     * 6.5.0 曾按访问器 o00OO0o / 数据装载 o00O0Ooo / 营销入口 o00oO0O0 按名挂钩；
+     * 6.6.0 里 o00OO0o 这个名字已被混淆器换给了 scheduleAdd（功能按钮，绝不能再挂），
+     * o00O0Ooo/o00oO0O0/o00O0OO0/o00O00e0 签名全变。改为：资源 id 隐藏 + 礼包加载器
+     * 按签名 (HomeSourceBanner, String)→void 动态发现 no-op（不 no-op 它，
+     * 服务端 banner 到达时图标会被 setVisibility(VISIBLE) 翻回）。
+     * 浮窗商城（StoreLayout）广告由仍存活的 E3 门禁把守。
      */
     private static final boolean HIDE_SCHEDULE_GIFT_ICON = true;
+
+    /** 顶栏图标的资源名（arsc 里的名字，R8 不重排；两版本实测均在）。 */
+    private static final String MINE_RES_NAME = "scheduleMine";
+    private static final String GIFT_RES_NAME = "scheduleIcon";
+
+    /** 解析后的资源 id：-1 = 还没解析，0 = 解析过但 arsc 里没有（自检告警）。 */
+    private volatile int mineIconId = -1;
+    private volatile int giftIconId = -1;
 
     /**
      * L7：上课提醒页里的“普通提醒”——它就是推送提醒（布局 id `pushNotifyLayout`，
@@ -274,6 +304,29 @@ public class WakeUpTarget extends SchoolTargetBase {
             APP + "aaa.fragment.MineFragment",
     };
 
+    // ------------------------------------------------------------ C组：launchmanager 任务拦截
+
+    /** launchmanager 任务基类（框架类名 6.5.0/6.6.0 一致）。 */
+    private static final String LAUNCH_TASK_BASE = "com.homework.launchmanager.task.Task";
+
+    /**
+     * C组任务名黑名单 —— 都是 App 自己写的任务标识字符串（6.5.0 各任务构造器
+     * super("…") 逐一实读；R8 不动字符串常量，6.6.0 实测 10 个全在），
+     * 不依赖任何混淆类名/方法名。
+     */
+    private static final String[] LAUNCH_TASK_KILL = new String[] {
+            "AdvertisementSdkInitTask",   // C1  FastAd 广告聚合初始化
+            "AdConfigTask",               // C2  广告配置拉取
+            "OaidInitTask",               // C4  OAID 采集
+            "DeviceIdTask",               // C9  设备唯一指纹
+            "TrackerInitTask",            // C5  nlog.daxuesoutijiang.com 行为埋点
+            "RLogInitTask",               // C6  远程日志上报
+            "LoggerInitTask",             // C6  内部日志上报
+            "PayTask",                    // C11 支付 SDK 初始化
+            "PushInitDelayTask",          // C12 推送 SDK 延迟初始化
+            "DpSdkTask",                  // C10 DProtect 风控/设备指纹
+    };
+
     // ------------------------------------------------------------ target 声明
 
     private static final String NAME = "WakeUp课程表";
@@ -296,6 +349,10 @@ public class WakeUpTarget extends SchoolTargetBase {
     public void install(final HookContext ctx) {
         // E6/E7/L1 的 Activity.onCreate 收口点必须在 App 起 Activity 之前挂好
         hookHybridBlocker();
+
+        // C组：launchmanager 任务拦截挂在这里（PackageReady/attach 相位）——
+        // 任务实例的构造必然在 Application 初始化之后，即必然在本挂钩之后。
+        installLaunchTaskKill(ctx.classLoader);
 
         ctx.onAppReady(new HookContext.AppReady() {
             @Override
@@ -351,14 +408,9 @@ public class WakeUpTarget extends SchoolTargetBase {
             installAppearanceUnlock(cl);
         }
 
-        // L6 简洁模式右上角的“我的”图标
-        if (HIDE_SCHEDULE_MINE_ICON) {
-            installScheduleMineHider(cl);
-        }
-
-        // L9 顶栏礼包/营销图标
-        if (HIDE_SCHEDULE_GIFT_ICON) {
-            installScheduleGiftIconHider(cl);
+        // L6/L9 顶栏图标：资源 id + 生命周期收口 + 访问器兜底 + 礼包加载器签名发现
+        if (HIDE_SCHEDULE_MINE_ICON || HIDE_SCHEDULE_GIFT_ICON) {
+            installScheduleTopIconHider(cl);
         }
 
         // L8 底栏高度
@@ -375,24 +427,14 @@ public class WakeUpTarget extends SchoolTargetBase {
     }
 
     /**
-     * C组：底层广告子系统与隐私信息收集彻底灭活。
+     * C3/C7/C8：底层广告与反作弊子系统的直挂钩（类名/方法名可读且两版本一致）。
      *
-     * 1. C1: AdvertisementSdkInitTask -> run() no-op (FastAd 广告聚合核心不加载)
-     *    双保险: o0O00000.OooO0O0 -> OooOOo() no-op
-     * 2. C2: AdConfigTask -> run() no-op (不向远端请求广告策略)
-     * 3. C3: WeaponHI (快手反作弊武器库) -> 所有 init() no-op (彻底消灭 netstat/mount/scrcpy 扫描及僵尸进程)
-     * 4. C4: OaidInitTask -> run() no-op (不采集厂商硬件 OAID)
-     * 5. C5: TrackerInitTask -> run() no-op (不向 nlog.daxuesoutijiang.com 上报用户行为埋点)
-     * 6. C6: RLogInitTask & LoggerInitTask -> run() no-op (停止远程日志与内部日志上报)
+     * 原 C1/C1b/C2/C4/C5/C6/C9/C10/C11/C12（按混淆类名挂钩的启动任务）已全部退役——
+     * 6.6.0 里 o0O0Ooo.o00Ooo 这个类名甚至被混淆器换给了广告渲染回调类。统一改由
+     * {@link #installLaunchTaskKill} 按任务名字符串拦截（见 {@link #install}），
+     * 黑名单见 {@link #LAUNCH_TASK_KILL}。
      */
     private void installSubsystemHooks(ClassLoader cl) {
-        // C1: AdvertisementSdkInitTask (广告 SDK 初始化根任务) 与 FastAd 广告核心单例
-        hookReplaceVoid(cl, "o0O0Ooo.Oooo0", "run", "C1 广告SDK初始化任务");
-        hookReplaceVoid(cl, "o0O00000.OooO0O0", "OooOOo", "C1 FastAd广告核心单例");
-
-        // C2: AdConfigTask (广告配置拉取任务)
-        hookReplaceVoid(cl, "o0O0OoOo.OooOo00", "run", "C2 广告配置拉取任务");
-
         // C3: 快手反作弊武器库与僵尸进程探测彻底阻断 (WeaponHI & dg)
         try {
             Class<?> dgCls = Xp.findClassIfExists("com.kuaishou.weapon.p0.dg", cl);
@@ -438,16 +480,6 @@ public class WakeUpTarget extends SchoolTargetBase {
             log("C3 WeaponHI hook FAILED: " + t);
         }
 
-        // C4: OaidInitTask (OAID 采集任务)
-        hookReplaceVoid(cl, "o0O0OoOo.oo000o", "run", "C4 OAID采集任务");
-
-        // C5: TrackerInitTask (用户行为埋点任务)
-        hookReplaceVoid(cl, "o0O0Ooo.oo000o", "run", "C5 用户行为埋点任务");
-
-        // C6: RLogInitTask & LoggerInitTask (日志上报任务)
-        hookReplaceVoid(cl, "o0O0Ooo.o00Ooo", "run", "C6 RLog日志任务");
-        hookReplaceVoid(cl, "o0O0OoOo.o00Oo0", "run", "C6 Logger日志任务");
-
         // C7: FastAd 四大网盟聚合子入口彻底灭活 (百度, 穿山甲, 快手, 优量汇)
         hookReplaceAllNamed(cl, "com.fastad.baidu.FastAdBDManager", "initBaiduSDK", "C7 百度广告初始化");
         hookReplaceAllNamed(cl, "com.fastad.csj.FastAdCsjManager", "initCsjSDK", "C7 穿山甲广告初始化");
@@ -470,195 +502,311 @@ public class WakeUpTarget extends SchoolTargetBase {
         } catch (Throwable t) {
             log("C8 KsAdSDK hook FAILED: " + t);
         }
-
-        // C9: DeviceIdTask (设备唯一指纹采集任务)
-        hookReplaceVoid(cl, "o0O0OoOo.Oooo0", "run", "C9 设备指纹采集任务");
-
-        // C10: DpSdkTask (DProtect 风控/反爬/设备指纹 SDK)
-        hookReplaceVoid(cl, "o0O0OoOo.o000oOoO", "run", "C10 DProtect风控指纹任务");
-
-        // C11: PayTask (支付 SDK 初始化)
-        hookReplaceVoid(cl, "o0O0OoOo.o00oO0o", "run", "C11 支付SDK任务");
-
-        // C12: PushInitDelayTask (推送 SDK 延迟初始化)
-        hookReplaceVoid(cl, "o0O0Ooo0.Oooo000", "run", "C12 推送初始化任务");
     }
 
     /**
-     * L6：挂钩 ScheduleFragment.oo0O()（scheduleMine 的访问器）。
-     * 返回后用 post 设 GONE：调用方拿到 view 还会自己 setVisibility，
-     * 同步改会被覆盖，丢到下一条消息里执行就赢了。
-     */
-    private void installScheduleMineHider(ClassLoader cl) {
-        final String cls = APP + "schedule.ScheduleFragment";
-        try {
-            java.lang.reflect.Method m = Xp.findMethod(Xp.findClass(cls, cl), "oo0O");
-            if (m == null) {
-                throw new NoSuchMethodException(cls + "#oo0O");
-            }
-            Xp.hook(m, chain -> {
-                Object result = chain.proceed();
-                final android.view.View v = (android.view.View) result;
-                if (v == null) {
-                    return result;
-                }
-                logOnce("L6 hit: 隐掉简洁模式的“我的”图标 (scheduleMine)");
-                v.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        v.setVisibility(android.view.View.GONE);
-                    }
-                });
-                return result;
-            });
-            logOnce("hook installed: L6 ScheduleFragment#oo0O");
-        } catch (Throwable t) {
-            log("L6 hook FAILED: " + t);
-        }
-    }
-
-    /**
-     * L9：彻底清除课表页顶栏礼包营销图标（scheduleIcon）。
+     * C组任务拦截：launchmanager（com.homework.launchmanager，框架类名两版本一致）
+     * 的每个启动任务都会把**任务名字符串**传进基类构造器——
+     * Task 唯一构造器是 Task(String)，两条继承链（直接 extends Task / 经
+     * OooO0o(String)→super(str)）都把名字原样传入（6.6.0 反编译实证）。
+     * 所以挂 Task 的全部构造器，getArg(0) 就是任务名，proceed 前即可判定，
+     * 不依赖任何混淆类名；命中黑名单再对该实例的具体类动态 no-op 其 run()。
      *
-     * 1. 访问器 o00OO0o() 强制设 GONE + post 设 GONE（防御其它地方意外获取并设 VISIBLE）。
-     * 2. 数据装载 o00O0Ooo(HomeSourceBanner, String) 直接 replace 为 DO_NOTHING（不下载图片、不解析 Lottie）。
-     * 3. 页面横幅/营销总入口 o00oO0O0(ScheduleFragment, Bannerconf) 直接 replace 返回 Unit
-     *    （礼包图标、浮窗商城 StoreLayout、信息流广告全部不装载）。
-     * 4. 模式切换 o00O0OO0(ScheduleFragment, boolean) 与 o00O00o0(boolean) 在 afterHookedMethod 里
-     *    确保 scheduleMine 与 scheduleIcon 始终保持 GONE。
+     * 挂在 install() 的 attach 相位：任务实例的构造必然在 Application 初始化之后，
+     * 即必然晚于本挂钩；构造先于 run，拦截才成立。
      */
-    private void installScheduleGiftIconHider(ClassLoader cl) {
-        final String cls = APP + "schedule.ScheduleFragment";
-
-        // 1. 访问器 o00OO0o() -> 设 GONE
+    private void installLaunchTaskKill(ClassLoader cl) {
         try {
-            java.lang.reflect.Method m = Xp.findMethod(Xp.findClass(cls, cl), "o00OO0o");
-            if (m == null) {
-                throw new NoSuchMethodException(cls + "#o00OO0o");
-            }
-            Xp.hook(m, chain -> {
-                Object result = chain.proceed();
-                final android.view.View v = (android.view.View) result;
-                if (v == null) {
-                    return result;
-                }
-                v.setVisibility(android.view.View.GONE);
-                v.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        v.setVisibility(android.view.View.GONE);
+            Class<?> taskCls = Xp.findClass(LAUNCH_TASK_BASE, cl);
+            int ctorCount = Xp.hookAllConstructors(taskCls, chain -> {
+                String taskName = null;
+                try {
+                    for (Object a : chain.getArgs().toArray()) {
+                        if (a instanceof String && isKillTask((String) a)) {
+                            taskName = (String) a;
+                            break;
+                        }
                     }
-                });
-                logOnce("L9 hit: scheduleIcon 设 GONE");
-                return result;
-            });
-            logOnce("hook installed: L9 ScheduleFragment#o00OO0o");
-        } catch (Throwable t) {
-            log("L9 o00OO0o hook FAILED: " + t);
-        }
-
-        // 2. 礼包数据渲染 o00O0Ooo(HomeSourceBanner, String) -> no-op
-        try {
-            Class<?> bannerCls = Xp.findClass(
-                    APP + "aaa.model.Bannerconf$HomeSourceBanner", cl);
-            java.lang.reflect.Method m = Xp.findMethod(Xp.findClass(cls, cl), "o00O0Ooo",
-                    bannerCls, String.class);
-            if (m == null) {
-                throw new NoSuchMethodException(cls + "#o00O0Ooo");
-            }
-            Xp.hook(m, chain -> null);
-            logOnce("hook installed: L9 ScheduleFragment#o00O0Ooo (banner loader noop)");
-        } catch (Throwable t) {
-            log("L9 o00O0Ooo hook FAILED: " + t);
-        }
-
-        // 3. 课表页营销总入口 o00oO0O0(ScheduleFragment, Bannerconf) -> 返回 Unit
-        try {
-            Class<?> fragCls = Xp.findClass(cls, cl);
-            Class<?> bannerConfCls = Xp.findClass(
-                    APP + "aaa.model.Bannerconf", cl);
-            Class<?> unitCls = Xp.findClass("kotlin.o0ooOOo", cl);
-            final Object unit = Xp.getStaticObjectField(unitCls, "OooO00o");
-
-            java.lang.reflect.Method m = Xp.findMethod(fragCls, "o00oO0O0",
-                    fragCls, bannerConfCls);
-            if (m == null) {
-                throw new NoSuchMethodException(cls + "#o00oO0O0");
-            }
-            Xp.hook(m, chain -> {
-                logOnce("L9 hit: o00oO0O0 拦截（礼包/商城/信息流广告）");
-                return unit;
-            });
-            logOnce("hook installed: L9 ScheduleFragment#o00oO0O0 (bannerconf receiver)");
-        } catch (Throwable t) {
-            log("L9 o00oO0O0 hook FAILED: " + t);
-        }
-
-        // 4. 模式切换 o00O0OO0(ScheduleFragment, boolean)
-        try {
-            Class<?> fragCls = Xp.findClass(cls, cl);
-            java.lang.reflect.Method m = Xp.findMethod(fragCls, "o00O0OO0",
-                    fragCls, boolean.class);
-            if (m == null) {
-                throw new NoSuchMethodException(cls + "#o00O0OO0");
-            }
-            Xp.hook(m, chain -> {
+                    if (taskName == null) {
+                        return chain.proceed();
+                    }
+                } catch (Throwable t) {
+                    log("C组 task 检查 FAILED: " + t);
+                    return chain.proceed();
+                }
+                // 先让构造完成（字段写入、内部状态就绪），再取实例挂 run()
                 Object result = chain.proceed();
-                hideTopButtons(chain.getArg(0));
+                try {
+                    Object self = chain.getThisObject();
+                    if (self != null) {
+                        hookTaskRunNoop(taskName, self.getClass());
+                    } else {
+                        logOnce("C组 告警: 任务 " + taskName
+                                + " 构造完成但拿不到实例（getThisObject=null），本条未拦截");
+                    }
+                } catch (Throwable t) {
+                    log("C组 task kill FAILED (" + taskName + "): " + t);
+                }
                 return result;
-            });
-            logOnce("hook installed: L9 ScheduleFragment#o00O0OO0");
-        } catch (Throwable t) {
-            log("L9 o00O0OO0 hook FAILED: " + t);
-        }
+            }).size();
 
-        // 5. 模式切换 o00O00o0(boolean)
-        try {
-            java.lang.reflect.Method m = Xp.findMethod(Xp.findClass(cls, cl), "o00O00o0",
-                    boolean.class);
-            if (m == null) {
-                throw new NoSuchMethodException(cls + "#o00O00o0");
-            }
-            Xp.hook(m, chain -> {
-                Object result = chain.proceed();
-                hideTopButtons(chain.getThisObject());
-                return result;
-            });
-            logOnce("hook installed: L9 ScheduleFragment#o00O00o0");
+            log("hook installed: C组 Task 构造器挂钩 " + ctorCount
+                    + " 个，任务名黑名单 " + LAUNCH_TASK_KILL.length + " 项");
         } catch (Throwable t) {
-            log("L9 o00O00o0 hook FAILED: " + t);
+            log("C组 task kill 挂钩 FAILED: " + t);
         }
     }
 
-    private void hideTopButtons(Object fragment) {
-        if (fragment == null) {
+    /** 已挂 no-op 的任务键（任务名@类名）：重复构造不重复挂，避免 Xp.HOOKS 堆积死句柄。 */
+    private final java.util.Set<String> taskKillHooked =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+
+    /** 对具体任务类的无参 run() 挂 no-op；带 id（同 id 原子替换），重复构造不会重复挂。 */
+    private void hookTaskRunNoop(String taskName, Class<?> taskClass) {
+        try {
+            String key = taskName + "@" + taskClass.getName();
+            synchronized (taskKillHooked) {
+                if (!taskKillHooked.add(key)) {
+                    return;
+                }
+            }
+            for (java.lang.reflect.Method m : taskClass.getDeclaredMethods()) {
+                if (!"run".equals(m.getName()) || m.getParameterTypes().length != 0) {
+                    continue;
+                }
+                // id 用完整键：同名任务换实现类时，同 id 挂不同方法的行为未定义
+                Xp.hook(m, "C-task-kill:" + key, chain -> {
+                    logOnce("C组 task kill: " + taskName + " -> " + taskClass.getName() + "#run");
+                    return null;
+                });
+                log("hook installed: C组 " + taskName + " -> " + taskClass.getName() + "#run no-op");
+                return;
+            }
+            log("C组 告警: " + taskName + " (" + taskClass.getName()
+                    + ") 没有声明无参 run()，未拦截");
+        } catch (Throwable t) {
+            log("C组 task kill FAILED (" + taskName + "): " + t);
+        }
+    }
+
+    private boolean isKillTask(String name) {
+        for (String s : LAUNCH_TASK_KILL) {
+            if (s.equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * L6/L9：顶栏图标净化（简洁模式右上角“我的”scheduleMine + 顶栏礼包/营销 scheduleIcon）。
+     *
+     * 6.6.0 起混淆名不可再依赖（o00OO0o 这个名字已被换给 scheduleAdd），方案全部落在稳定锚点：
+     *
+     * 1. 资源 id：getIdentifier 解析 scheduleMine/scheduleIcon（arsc 不被 R8 重排，
+     *    两版本实测都在；解析结果缓存 + 自检日志，解析为 0 出声）。
+     * 2. 生命周期收口：onCreateView 返回后隐藏；onViewCreated / onResume 重隐
+     *    （覆盖简洁模式切换等导致的视图重建；若真机验证发现未覆盖的原地翻回路径再补）。
+     * 3. oo0O 访问器兜底（带身份核验）：6.6.0 真机实测 oo0O 返回的是
+     *    scheduleImport（0x7f0908c0）而非 scheduleMine（0x7f0908c4）——早前
+     *    「scheduleMine 的 Lazy 访问器」判断系误读，未核验版本因此真把导入
+     *    按钮藏了（2026-10-24 设备日志实证）。现在返回视图与 scheduleMine 资源
+     *    id 一致才隐藏，不一致告警跳过；下版本彻底换名时这条打「访问器不存在」。
+     * 4. 礼包加载器按签名动态发现：扫 ScheduleFragment 声明方法里参数恰为
+     *    (Bannerconf$HomeSourceBanner, String)、返回 void 的候选，全部 no-op。
+     *    650/660 实测都恰有 1 个（650=o00O0Ooo / 660=o00oOOo）——它会在服务端 banner
+     *    到达时 setVisibility(VISIBLE) 并装载 Lottie/zip，不 no-op 则图标翻回。
+     *    候选数必须打日志：0 = FAILED，>1 = 告警人工核对。
+     */
+    private void installScheduleTopIconHider(ClassLoader cl) {
+        final String cls = APP + "schedule.ScheduleFragment";
+        Class<?> fragCls;
+        try {
+            fragCls = Xp.findClass(cls, cl);
+        } catch (Throwable t) {
+            log("L6/L9 FAILED: " + cls + " 类不存在——" + t);
             return;
         }
+
+        // 1. 生命周期收口：onCreateView 返回后隐藏（首次隐藏点）
         try {
-            final android.view.View mine = (android.view.View) Xp.callMethod(fragment, "oo0O");
-            if (mine != null) {
-                mine.setVisibility(android.view.View.GONE);
-                mine.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        mine.setVisibility(android.view.View.GONE);
-                    }
-                });
+            java.lang.reflect.Method cv = Xp.findMethod(fragCls, "onCreateView",
+                    android.view.LayoutInflater.class, android.view.ViewGroup.class, Bundle.class);
+            if (cv == null) {
+                throw new NoSuchMethodException(cls + "#onCreateView(LayoutInflater,ViewGroup,Bundle)");
             }
-        } catch (Throwable ignored) {
+            Xp.hook(cv, chain -> {
+                Object result = chain.proceed();
+                if (result instanceof android.view.View) {
+                    hideTopIcons((android.view.View) result);
+                }
+                return result;
+            });
+            log("hook installed: L6/L9 onCreateView 收口");
+        } catch (Throwable t) {
+            log("L6/L9 onCreateView 收口 FAILED: " + t);
         }
+
+        // 2. onViewCreated 重隐
         try {
-            final android.view.View icon = (android.view.View) Xp.callMethod(fragment, "o00OO0o");
-            if (icon != null) {
-                icon.setVisibility(android.view.View.GONE);
-                icon.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        icon.setVisibility(android.view.View.GONE);
-                    }
-                });
+            java.lang.reflect.Method vc = Xp.findMethod(fragCls, "onViewCreated",
+                    android.view.View.class, Bundle.class);
+            if (vc == null) {
+                throw new NoSuchMethodException(cls + "#onViewCreated(View,Bundle)");
             }
-        } catch (Throwable ignored) {
+            Xp.hook(vc, chain -> {
+                Object result = chain.proceed();
+                if (chain.getArg(0) instanceof android.view.View) {
+                    hideTopIcons((android.view.View) chain.getArg(0));
+                }
+                return result;
+            });
+            log("hook installed: L6/L9 onViewCreated 重隐");
+        } catch (Throwable t) {
+            log("L6/L9 onViewCreated 重隐 FAILED: " + t);
+        }
+
+        // 3. onResume 重隐（覆盖简洁模式切换等导致的视图重建）
+        try {
+            java.lang.reflect.Method rs = Xp.findMethod(fragCls, "onResume");
+            if (rs == null) {
+                throw new NoSuchMethodException(cls + "#onResume()");
+            }
+            Xp.hook(rs, chain -> {
+                Object result = chain.proceed();
+                try {
+                    Object root = Xp.callMethod(chain.getThisObject(), "getView");
+                    if (root instanceof android.view.View) {
+                        hideTopIcons((android.view.View) root);
+                    }
+                } catch (Throwable t) {
+                    logOnce("L6/L9 onResume 重隐失败: " + t);
+                }
+                return result;
+            });
+            log("hook installed: L6/L9 onResume 重隐");
+        } catch (Throwable t) {
+            log("L6/L9 onResume 重隐 FAILED: " + t);
+        }
+
+        // 3. oo0O 访问器兜底（失败不致命：资源 id 方案仍在）
+        try {
+            java.lang.reflect.Method mine = Xp.findMethod(Xp.findClass(cls, cl), "oo0O");
+            if (mine == null) {
+                log("L6 兜底: oo0O 访问器不存在（下版本换名了？）——资源 id 方案仍在，跳过此条");
+            } else {
+                Xp.hook(mine, chain -> {
+                    Object result = chain.proceed();
+                    if (result instanceof android.view.View) {
+                        final android.view.View v = (android.view.View) result;
+                        // 身份核验：oo0O 是混淆名，同名可能换给别的视图访问器；
+                        // 与 scheduleMine 资源 id 一致才隐藏，否则告警跳过（防静默藏掉功能按钮）
+                        int id = mineIconId;
+                        if (id <= 0) { // 与主路径 hideTopIconById 同款重试语义
+                            id = v.getResources().getIdentifier(
+                                    MINE_RES_NAME, "id", v.getContext().getPackageName());
+                            mineIconId = id;
+                            if (id != 0) {
+                                log("L6/L9 自检: " + MINE_RES_NAME + " id=0x"
+                                        + Integer.toHexString(id));
+                            }
+                        }
+                        if (id == 0) {
+                            logOnce("L6 兜底: scheduleMine id 解析为 0，无法核验 oo0O 返回视图身份，本条不隐藏");
+                        } else if (v.getId() == id) {
+                            v.setVisibility(android.view.View.GONE);
+                            v.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    v.setVisibility(android.view.View.GONE);
+                                }
+                            });
+                            logOnce("L6 hit: oo0O 访问器兜底（id 已核验=scheduleMine）-> GONE");
+                        } else {
+                            logOnce("L6 告警: oo0O 返回视图 id=0x" + Integer.toHexString(v.getId())
+                                    + " ≠ scheduleMine(0x" + Integer.toHexString(id)
+                                    + ")，疑似同名换人，跳过隐藏");
+                        }
+                    }
+                    return result;
+                });
+                log("hook installed: L6 oo0O 访问器兜底");
+            }
+        } catch (Throwable t) {
+            log("L6 oo0O 兜底 FAILED: " + t);
+        }
+
+        // 4. 礼包加载器：签名 (HomeSourceBanner, String) -> void 动态发现
+        try {
+            Class<?> bannerItem = Xp.findClass(APP + "aaa.model.Bannerconf$HomeSourceBanner", cl);
+            int candidates = 0;
+            StringBuilder names = new StringBuilder();
+            for (java.lang.reflect.Method m : fragCls.getDeclaredMethods()) {
+                Class<?>[] pt = m.getParameterTypes();
+                if (m.getReturnType() != void.class || pt.length != 2
+                        || pt[0] != bannerItem || pt[1] != String.class) {
+                    continue;
+                }
+                final String methodName = m.getName();
+                Xp.hook(m, chain -> {
+                    logOnce("L9 hit: 礼包加载器 no-op（" + methodName + "）");
+                    return null;
+                });
+                candidates++;
+                names.append(methodName).append(' ');
+            }
+            if (candidates == 1) {
+                log("hook installed: L9 礼包加载器动态发现（1 候选: " + names + "）");
+            } else if (candidates == 0) {
+                log("L9 hook FAILED: 签名 (HomeSourceBanner, String)→void 零候选——图标会被服务端 banner 翻回");
+            } else {
+                log("L9 告警: 礼包加载器签名命中 " + candidates + " 个候选（" + names
+                        + "）已全部 no-op，需人工核对是否误伤");
+            }
+        } catch (Throwable t) {
+            log("L9 礼包加载器发现 FAILED: " + t);
+        }
+    }
+
+    /** 两个顶栏图标各按自己的开关隐藏。 */
+    private void hideTopIcons(android.view.View root) {
+        if (root == null) {
+            return;
+        }
+        if (HIDE_SCHEDULE_MINE_ICON) {
+            hideTopIconById(root, MINE_RES_NAME);
+        }
+        if (HIDE_SCHEDULE_GIFT_ICON) {
+            hideTopIconById(root, GIFT_RES_NAME);
+        }
+    }
+
+    /** 按资源名取缓存 id（没解析过则解析 + 自检日志），在 root 子树里 GONE。 */
+    private void hideTopIconById(android.view.View root, String resName) {
+        try {
+            boolean isMine = MINE_RES_NAME.equals(resName);
+            int id = isMine ? mineIconId : giftIconId;
+            if (id <= 0) {
+                id = root.getResources().getIdentifier(
+                        resName, "id", root.getContext().getPackageName());
+                if (isMine) {
+                    mineIconId = id;
+                } else {
+                    giftIconId = id;
+                }
+                if (id == 0) {
+                    logOnce("L6/L9 自检: 资源 id " + resName + " 解析为 0（资源名变了？）");
+                    return;
+                }
+                log("L6/L9 自检: " + resName + " id=0x" + Integer.toHexString(id));
+            }
+            android.view.View v = root.findViewById(id);
+            if (v != null && v.getVisibility() != android.view.View.GONE) {
+                v.setVisibility(android.view.View.GONE);
+                logOnce("L6/L9 hit: " + resName + " -> GONE");
+            }
+        } catch (Throwable t) {
+            logOnce("L6/L9 FAILED (" + resName + "): " + t);
         }
     }
 
@@ -1278,16 +1426,39 @@ public class WakeUpTarget extends SchoolTargetBase {
     // ------------------------------------------- 第二阶段：剪标签（由 TRIM_LEARN_TABS 控制，当前启用）
 
     private void installTabTrim(ClassLoader cl) {
-        // 原生开关：“表助手”标签（保留作为双保险）
-        hookFalse(cl, "o0O0o0O.o00oO0o", "OooOOOo", "表助手标签");
-
+        // adapter 双名回退：6.6.0 起标签构建搬进 ScheduleActivity.onCreate
+        // （new o0OO00Oo.OooOOO0(fm, list)），6.5.0 为 o0O0OOoo.OooOOO。
+        // R8 同名换人是常态：名字命中还须构造器形状（FragmentManager+List）相符
+        // 才接受，不符试下一候选——防误挂换人类的构造器并对其 List 元素乱反射。
+        // 原生开关 o0O0o0O.o00oO0o#OooOOOo 在 6.6.0 类已消失，List 过滤本就覆盖
+        // assistant，不再单独挂（6.5.0 上少一条双保险，裁剪结果不变）。
+        String[] adapterCandidates = {"o0OO00Oo.OooOOO0", "o0O0OOoo.OooOOO"};
+        Class<?> adapter = null;
+        String adapterName = null;
+        for (String cand : adapterCandidates) {
+            Class<?> c = Xp.findClassIfExists(cand, cl);
+            if (c == null) {
+                continue;
+            }
+            if (!AdapterCtorShape.hasFmListCtor(c, "androidx.fragment.app.FragmentManager")) {
+                log("标签裁剪: 候选 " + cand
+                        + " 存在但形状校验未通过（无 FragmentManager+List 构造器或枚举失败），试下一个");
+                continue;
+            }
+            adapter = c;
+            adapterName = cand;
+            break;
+        }
+        if (adapter == null) {
+            log("标签裁剪 hook FAILED: adapter 双名都不可用（不存在或形状不符："
+                    + "o0OO00Oo.OooOOO0 / o0O0OOoo.OooOOO）");
+            return;
+        }
         // 之前用 findAndHookMethod(..., "<init>", FragmentManager, List) 会报
         // NoSuchMethodError(#exact)，尽管反编译出来的签名看起来完全一致。
         // 改用 Xp.hookAllConstructors：遍历 getDeclaredConstructors()，不做签名匹配，
         // 直接在 args 里找 List。同时把真实签名打出来，下次不必再猜。
-        final String adapterName = "o0O0OOoo.OooOOO";
         try {
-            Class<?> adapter = Xp.findClass(adapterName, cl);
             for (java.lang.reflect.Constructor<?> c : adapter.getDeclaredConstructors()) {
                 logOnce("  adapter ctor: " + java.util.Arrays.toString(c.getParameterTypes()));
             }
