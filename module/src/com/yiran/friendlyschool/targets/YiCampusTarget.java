@@ -94,6 +94,80 @@ public class YiCampusTarget extends SchoolTargetBase {
         installAssetDefense();
         installPrivacyDefense(cl);
         installClipboardDefense();
+        installZjGuard();
+    }
+
+    /**
+     * ZJ 广告 SDK 守卫（2026-10-24，随 7.8.7 适配勘察新增）。
+     *
+     * 7.8.7 的 ZJ SDK（com.zj.zjsdkplug 为其动态插件 dex，assets/Z<32hex>J.jar）首次在
+     * manifest 挂出全套广告组件：插屏/激励/开屏/H5/摇一摇（SensorTransparentAdActivity）/
+     * 下载弹窗/反馈页共 7 个 Activity + 下载 Service 群。其代码在运行时才解密可见，静态
+     * 不可见 —— 所以按**运行时类名前缀匹配**拦截，不提前加载任何 ZJ 类；zjsdkplug 整包
+     * 皆广告功能、com.zj. 前缀不可能是易校园自有代码，前缀匹配对 SDK 后续加组件免疫。
+     *
+     * 兼作**观测哨兵**：截至 7.8.7 尚未观测到 ZJ 实际出广告，是否激活由命中日志回答
+     * （每次命中记录具体类名，logOnce 防刷屏）。
+     *
+     * 明确不做：不拦插件 jar 加载（会破坏宿主状态机——JM v1.0 开屏卡死教训）；
+     * 不拦 receiver（活动/服务被断后它们没有输入源）。
+     */
+    private void installZjGuard() {
+        final String prefix = "com.zj.";
+        try {
+            // 展示面：Activity.onCreate after -> finish()（after 拦截与 CommandActivity 同模式）
+            Method actOnCreate = Xp.findMethod(android.app.Activity.class, "onCreate",
+                    android.os.Bundle.class);
+            if (actOnCreate == null) {
+                throw new NoSuchMethodException("android.app.Activity#onCreate(Bundle)");
+            }
+            Xp.hook(actOnCreate, chain -> {
+                Object result = chain.proceed();
+                Object self = chain.getThisObject();
+                if (self instanceof Activity
+                        && self.getClass().getName().startsWith(prefix)) {
+                    logOnce("ZJ guard: 拦截广告 Activity -> finish() "
+                            + self.getClass().getName());
+                    ((Activity) self).finish();
+                }
+                return result;
+            });
+
+            // 下载面：Service.onCreate after -> stopSelf()；onStartCommand before -> 跳过执行
+            Method svcOnCreate = Xp.findMethod(android.app.Service.class, "onCreate");
+            if (svcOnCreate == null) {
+                throw new NoSuchMethodException("android.app.Service#onCreate()");
+            }
+            Xp.hook(svcOnCreate, chain -> {
+                Object result = chain.proceed();
+                Object self = chain.getThisObject();
+                if (self instanceof android.app.Service
+                        && self.getClass().getName().startsWith(prefix)) {
+                    logOnce("ZJ guard: 拦截下载 Service -> stopSelf() "
+                            + self.getClass().getName());
+                    ((android.app.Service) self).stopSelf();
+                }
+                return result;
+            });
+            Method svcStart = Xp.findMethod(android.app.Service.class, "onStartCommand",
+                    android.content.Intent.class, int.class, int.class);
+            if (svcStart == null) {
+                throw new NoSuchMethodException(
+                        "android.app.Service#onStartCommand(Intent,int,int)");
+            }
+            Xp.hook(svcStart, chain -> {
+                Object self = chain.getThisObject();
+                if (self != null && self.getClass().getName().startsWith(prefix)) {
+                    logOnce("ZJ guard: 拦截下载 Service#onStartCommand "
+                            + self.getClass().getName());
+                    return 0; // START_STICKY_COMPATIBILITY：不做任何下载工作也不自动重启
+                }
+                return chain.proceed();
+            });
+            log("hook installed: ZJ guard x3（Activity/Service 前缀 com.zj.）");
+        } catch (Throwable t) {
+            log("installZjGuard FAILED: " + t);
+        }
     }
 
     private void installShellDefense() {

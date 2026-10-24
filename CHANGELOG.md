@@ -13,7 +13,11 @@ versionCode：`10`。
   - **顶栏图标**（简洁模式「我的」人形图标 + 顶栏礼包图标）：改走**资源 id**（R8 不重排 arsc 资源名，`scheduleMine`/`scheduleIcon` 两版本实测都在）+ ScheduleFragment 生命周期收口（onCreateView / onViewCreated / onResume 三点重隐）+ `oo0O` 访问器兜底；礼包加载器按签名 `(HomeSourceBanner, String)→void` 动态发现并 no-op（不 no-op 它，服务端 banner 到达时会把图标翻回 VISIBLE）；
   - **底层任务**（广告SDK / 广告配置 / OAID / 设备指纹 / 埋点 / 远程与内部日志 / 支付 / 推送 / DProtect 共 10 项）：不再按混淆类名挂钩，改为挂 launchmanager 基类 `Task` 构造器、按**任务名字符串黑名单**（App 自有语义，R8 不动字符串常量）动态 no-op 命中任务的 `run()`。
   - 双版本兼容：以上机制在 6.5.0（versionCode 540）与 6.6.0（550）上均可工作；每条 hook 装不上都有 FAILED 日志，冷启动一次即可定位。
-- 未尽事项：顶栏图标若在简洁模式切换等场景出现原地翻回（onResume 重隐覆盖不到的路径），将在真机验证后补针对性防御；E 组门禁（开屏/插播/商城位广告）、会员弹窗拦截（L3）、会员门禁本地放行（V 组）在 6.6.0 上经静态核验未受混淆重排影响，未改动。
+- **易校园：新增 ZJ 广告 SDK 守卫**。7.8.7 的 ZJ SDK 首次在 manifest 挂出全套广告组件（插屏/激励/开屏/H5/摇一摇/下载弹窗/反馈页 + 下载服务），其代码在运行时解密的插件 jar 里、静态不可见。守卫按**运行时类名前缀 `com.zj.`** 拦截（Activity onCreate 后 finish、Service onCreate 后 stopSelf、onStartCommand 跳过），不提前加载任何 ZJ 类，对 SDK 后续加组件免疫；每次命中打日志报具体类名。不拦插件加载（避免破坏宿主状态机）。
+
+### 使用建议
+
+- **易校园与 WakeUp 课程表非必要不更新**：这两个目标的每次版本更新都会新增/更换广告 SDK 并重排混淆（本次易校园 7.8.7 新增 ZJ 广告 SDK 全套广告组件、WakeUp 6.6.0 混淆重排曾致部分拦截失效），模块需要跟随适配。停留在已验证组合（易校园 7.8.7（含 ZJ 守卫）、WakeUp 6.5.0–6.6.0）净化效果最稳。
 
 ## 2.3.3（2026-10-08）
 
