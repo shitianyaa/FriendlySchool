@@ -17,7 +17,7 @@ $META_X = Join-Path $META "META-INF\xposed"
 $MANIFEST = Join-Path $MOD "AndroidManifest.xml"
 
 $APP_DIR = if ($env:APPDIR) { $env:APPDIR } else { Join-Path $SCRIPT_DIR "dist" }
-$APK_NAME = "FriendlySchool-LSPosed-v2.3.4.apk"
+$APK_NAME = "FriendlySchool-LSPosed-v2.4.0.apk"
 
 $D8 = Join-Path $BT "d8.bat"
 $AAPT2 = Join-Path $BT "aapt2.exe"
@@ -169,7 +169,13 @@ Write-Host "-- manifest（不该再有 xposed* meta-data，描述应指向资源
 
 Write-Host "`n=== 产物 ===" -ForegroundColor Green
 Get-Item "$OUT\module.apk" | Format-List FullName, Length, LastWriteTime
-$apkHash = (Get-FileHash -Path "$OUT\module.apk" -Algorithm SHA256).Hash
+$apkHash = if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+    (Get-FileHash -Path "$OUT\module.apk" -Algorithm SHA256).Hash
+} else {
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path "$OUT\module.apk"))
+    [System.BitConverter]::ToString($hasher.ComputeHash($bytes)).Replace("-", "")
+}
 Write-Host "SHA-256: $apkHash"
 
 if (-not (Test-Path -LiteralPath $APP_DIR)) {
