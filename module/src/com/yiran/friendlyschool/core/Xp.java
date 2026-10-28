@@ -32,6 +32,9 @@ public final class Xp {
 
     private static volatile XposedModule MODULE;
 
+    /** 见 {@link #enableLogcatMirror()}；默认关，只有被加固壳吞日志的目标才开。 */
+    private static volatile boolean logcatMirror = false;
+
     private static final List<HookHandle> HOOKS =
             Collections.synchronizedList(new ArrayList<HookHandle>());
 
@@ -54,6 +57,18 @@ public final class Xp {
     // ------------------------------------------------------------------ 日志
 
     /**
+     * 某些加固包会把低级别日志整个吞掉（人民日报 7.4.3.1 的爱加密壳实测：`libexecmain.so`
+     * 加载后，本进程的 INFO / WARN 全部丢失，只有 ERROR 能出 logcat；LSPosed 的模块日志同样被吞，
+     * 而 `module().log(...)` 本身并不报错——属于典型的“静默失效”）。
+     *
+     * 命中这种目标的进程里调一次本方法，日志会额外镜像到 logcat 的 ERROR 级，
+     * 保证“装不上必须出声”这条纪律在这些包上仍然成立。其它目标不调，避免重复刷屏。
+     */
+    public static void enableLogcatMirror() {
+        logcatMirror = true;
+    }
+
+    /**
      * 统一日志出口。绑不上模块实例时退到 stderr —— 不允许整条链路静默。
      */
     public static void log(String msg) {
@@ -61,6 +76,12 @@ public final class Xp {
             module().log(Log.INFO, TAG, msg);
         } catch (Throwable t) {
             System.err.println(TAG + " " + msg);
+        }
+        if (logcatMirror) {
+            try {
+                Log.println(Log.ERROR, TAG, msg);
+            } catch (Throwable ignored) {
+            }
         }
     }
 
