@@ -63,7 +63,9 @@ public class PeopleDailyTarget extends SchoolTargetBase {
     private static final String CLS_SIGN_IN_LISTENER = "com.people.personalcenter.vm.incentive.IPointSignInListener";
 
     private static final AtomicBoolean signingInProgress = new AtomicBoolean(false);
-    private static volatile String lastSignDate = "";
+    private static volatile String lastSignDateWithAccount = "";
+    private static volatile long lastAttemptTime = 0L;
+    private static final long RETRY_COOLDOWN_MS = 10 * 60 * 1000L; // 失败重试冷却时间（10分钟）
 
     @Override
     public String shortName() {
@@ -150,6 +152,9 @@ public class PeopleDailyTarget extends SchoolTargetBase {
         try {
             Class<?> parserClass = Xp.findClassIfExists(CLS_SECTION_PARSER, cl);
             if (parserClass != null) {
+                boolean layoutHooked = false;
+                boolean sectionHooked = false;
+
                 // 1. parseLayoutManager(String str)
                 Method mParseLayout = Xp.findMethod(parserClass, "parseLayoutManager", String.class);
                 if (mParseLayout != null) {
@@ -162,7 +167,7 @@ public class PeopleDailyTarget extends SchoolTargetBase {
                         return chain.proceed();
                     });
                     log("hook installed: 信息流组件布局过滤 AbsSectionParser#parseLayoutManager(String)");
-                    ok = true;
+                    layoutHooked = true;
                 } else {
                     log("hook FAILED: AbsSectionParser#parseLayoutManager(String) 未找到");
                 }
@@ -193,6 +198,7 @@ public class PeopleDailyTarget extends SchoolTargetBase {
                             return chain.proceed();
                         });
                         log("hook installed: 信息流组件数据项过滤 AbsSectionParser#parseSection");
+                        sectionHooked = true;
                     } else {
                         if (mParseSection == null) {
                             log("hook FAILED: AbsSectionParser#parseSection 方法未找到");
@@ -203,6 +209,13 @@ public class PeopleDailyTarget extends SchoolTargetBase {
                     }
                 } else {
                     log("class MISSING: AbsGroup/CompBean (" + absGroupClass + "/" + compBeanClass + ") -> 跳过 parseSection 过滤");
+                }
+
+                if (layoutHooked && sectionHooked) {
+                    log("hook installed: 信息流广告过滤全部就绪 (layoutManager + section)");
+                    ok = true;
+                } else {
+                    log("hook PARTIAL: 信息流广告过滤未全就绪 (layout=" + layoutHooked + ", section=" + sectionHooked + ")");
                 }
             } else {
                 log("class MISSING: AbsSectionParser (信息流组件解析器)");
@@ -246,80 +259,140 @@ public class PeopleDailyTarget extends SchoolTargetBase {
         return ok;
     }
 
-    private void scheduleAutoSignIn(final Activity activity, final ClassLoader cl) {
-        final String today = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
+    private boolean isUserLoggedIn(ClassLoader cl) {
+        try {
+            Class<?> pdUtilsClass = Xp.findClassIfExists(CLS_PD_UTILS, cl);
+            if (pdUtilsClass != null) {
+                Method isLoginMethod = Xp.findMethod(pdUtilsClass, "isLogin");
+                if (isLoginMethod != null) {
+                    Object res = isLoginMethod.invoke(null);
+                    return Boolean.TRUE.equals(res);
+                }
+            }
+        } catch (Throwable t) {
+            logOnce("检查登录状态异常: " + t);
+        }
+        return false;
+    }
 
-        // 1. 内存快速去重
-        if (today.equals(lastSignDate)) {
+    private String getAccountKeySuffix(ClassLoader cl) {
+        try {
+            Class<?> spClass = Xp.findClassIfExists(CLS_SP_UTILS, cl);
+            if (spClass != null) {
+                Method mD1 = Xp.findMethod(spClass, "d1");
+                if (mD1 != null) {
+                    Object token = mD1.invoke(null);
+                    if (token instanceof String && !((String) token).isEmpty()) {
+                        return "_" + Integer.toHexString(token.hashCode());
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return "";
+    }
+
+    private void scheduleAutoSignIn(final Activity activity, final ClassLoader cl) {
+        // 1. Fail-Closed 登录态检查：只有确认已登录才继续调度
+        if (!isUserLoggedIn(cl)) {
             return;
         }
 
-        // 2. SharedPreferences 持久化去重（防止同一天多次冷启动重复请求）
+        final String today = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
+        final String accountSuffix = getAccountKeySuffix(cl);
+        final String memoryKey = today + accountSuffix;
+        final String prefKey = "pd_last_sign_date" + accountSuffix;
+
+        // 2. 内存快速去重
+        if (memoryKey.equals(lastSignDateWithAccount)) {
+            return;
+        }
+
+        // 3. SharedPreferences 持久化去重（防止同账号同一天多次冷启动重复请求）
         try {
             SharedPreferences sp = activity.getSharedPreferences("friendlyschool_prefs", Context.MODE_PRIVATE);
-            if (today.equals(sp.getString("pd_last_sign_date", ""))) {
-                lastSignDate = today;
+            if (today.equals(sp.getString(prefKey, ""))) {
+                lastSignDateWithAccount = memoryKey;
                 logOnce("自动签到跳过：今日（" + today + "）已完成签到");
                 return;
             }
         } catch (Throwable ignored) {
         }
 
-        // 3. 检查登录态（未登录则跳过）
-        try {
-            Class<?> pdUtilsClass = Xp.findClassIfExists(CLS_PD_UTILS, cl);
-            if (pdUtilsClass != null) {
-                Method isLoginMethod = Xp.findMethod(pdUtilsClass, "isLogin");
-                if (isLoginMethod != null) {
-                    Object isLogin = isLoginMethod.invoke(null);
-                    if (isLogin instanceof Boolean && !((Boolean) isLogin)) {
-                        logOnce("自动签到跳过：用户未登录");
-                        return;
-                    }
-                }
-            }
-        } catch (Throwable t) {
-            log("检查登录状态异常: " + t);
-        }
-
-        if (!signingInProgress.compareAndSet(false, true)) {
+        // 4. 失败重试冷却时间控制（10 分钟），防止弱网/断网时频繁重试
+        long now = System.currentTimeMillis();
+        if (now - lastAttemptTime < RETRY_COOLDOWN_MS) {
             return;
         }
 
+        // 5. 并发获取与锁定时机
+        if (!signingInProgress.compareAndSet(false, true)) {
+            return;
+        }
+        lastAttemptTime = now;
+
         // 延时 2 秒在主线程运行，避开冷启动首屏与首页首刷网络高峰
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            try {
-                executeAutoSignIn(activity, cl, today);
-            } finally {
+            // 延迟执行时二次复核：确认 Activity 未销毁、依然处于登录态、且未被其他路径完成签到
+            if (activity.isFinishing() || activity.isDestroyed()) {
                 signingInProgress.set(false);
+                return;
             }
+            if (!isUserLoggedIn(cl)) {
+                logOnce("自动签到跳过：二次复核用户未登录");
+                signingInProgress.set(false);
+                return;
+            }
+            if (memoryKey.equals(lastSignDateWithAccount)) {
+                signingInProgress.set(false);
+                return;
+            }
+
+            executeAutoSignIn(activity, cl, today, accountSuffix, memoryKey, prefKey);
         }, 2000L);
     }
 
-    private void executeAutoSignIn(final Activity activity, final ClassLoader cl, final String today) {
+    private void executeAutoSignIn(final Activity activity, final ClassLoader cl,
+                                  final String today, final String accountSuffix,
+                                  final String memoryKey, final String prefKey) {
         try {
             Class<?> vmClass = Xp.findClassIfExists(CLS_USER_POINT_VM, cl);
-            if (vmClass == null) {
-                log("自动签到失败：UserPointViewModel 类未找到");
+            Class<?> listenerClass = Xp.findClassIfExists(CLS_SIGN_IN_LISTENER, cl);
+            if (vmClass == null || listenerClass == null) {
+                log("自动签到阻断：UserPointViewModel 或 IPointSignInListener 类未找到");
+                signingInProgress.set(false);
                 return;
             }
+
             final Object vm = vmClass.newInstance();
 
             // 注册动态代理监听器获取签到结果
-            Class<?> listenerClass = Xp.findClassIfExists(CLS_SIGN_IN_LISTENER, cl);
-            if (listenerClass != null) {
-                Object proxyListener = Proxy.newProxyInstance(
-                        cl,
-                        new Class<?>[]{listenerClass},
-                        new InvocationHandler() {
-                            @Override
-                            public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                                String mName = method.getName();
+            Object proxyListener = Proxy.newProxyInstance(
+                    cl,
+                    new Class<?>[]{listenerClass},
+                    new InvocationHandler() {
+                        @Override
+                        public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                            String mName = method.getName();
+
+                            // 1. 处理 Object 基础方法，防止返回 null 在拆箱为基本类型时抛 NullPointerException
+                            if ("hashCode".equals(mName)) {
+                                return System.identityHashCode(proxy);
+                            }
+                            if ("equals".equals(mName)) {
+                                return (args != null && args.length > 0 && proxy == args[0]);
+                            }
+                            if ("toString".equals(mName)) {
+                                return "PeopleDailySignInListenerProxy@" + Integer.toHexString(System.identityHashCode(proxy));
+                            }
+
+                            // 2. 处理业务回调
+                            try {
                                 if ("onPointSignInSuccess".equals(mName) && args != null && args.length > 0) {
-                                    lastSignDate = today;
+                                    lastSignDateWithAccount = memoryKey;
                                     try {
                                         SharedPreferences sp = activity.getSharedPreferences("friendlyschool_prefs", Context.MODE_PRIVATE);
-                                        sp.edit().putString("pd_last_sign_date", today).apply();
+                                        sp.edit().putString(prefKey, today).apply();
                                     } catch (Throwable ignored) {
                                     }
 
@@ -351,23 +424,34 @@ public class PeopleDailyTarget extends SchoolTargetBase {
                                 } else if ("onPointSignInFailed".equals(mName)) {
                                     log("自动签到接口返回失败: " + (args != null && args.length > 0 ? args[0] : ""));
                                 }
-                                return null;
+                            } finally {
+                                // 异步网络请求回调到达，释放 in-flight 锁
+                                signingInProgress.set(false);
                             }
-                        }
-                );
-
-                // 绑定监听器：避免 ClassLoader 跨界类型比对问题，按方法名反射调用
-                for (Method m : vmClass.getDeclaredMethods()) {
-                    if ("observePointSignInListener".equals(m.getName())) {
-                        try {
-                            m.setAccessible(true);
-                            m.invoke(vm, activity, proxyListener);
-                            break;
-                        } catch (Throwable t) {
-                            log("observePointSignInListener 调用异常: " + t);
+                            return null;
                         }
                     }
+            );
+
+            // 绑定监听器：只有成功绑定监听器后才允许发包，否则无法持久化去重
+            boolean listenerBound = false;
+            for (Method m : vmClass.getDeclaredMethods()) {
+                if ("observePointSignInListener".equals(m.getName())) {
+                    try {
+                        m.setAccessible(true);
+                        m.invoke(vm, activity, proxyListener);
+                        listenerBound = true;
+                        break;
+                    } catch (Throwable t) {
+                        log("observePointSignInListener 调用异常: " + t);
+                    }
                 }
+            }
+
+            if (!listenerBound) {
+                log("自动签到阻断：未能成功绑定 IPointSignInListener，放弃发包");
+                signingInProgress.set(false);
+                return;
             }
 
             // 发起签到
@@ -376,10 +460,12 @@ public class PeopleDailyTarget extends SchoolTargetBase {
                 pointSignInMethod.invoke(vm);
                 log("已触发自动签到 pointSignIn()");
             } else {
-                log("自动签到失败：pointSignIn 方法未找到");
+                log("自动签到阻断：pointSignIn 方法未找到");
+                signingInProgress.set(false);
             }
         } catch (Throwable t) {
             log("自动签到执行异常: " + t);
+            signingInProgress.set(false);
         }
     }
 }
