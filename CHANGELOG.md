@@ -2,6 +2,19 @@
 
 随改动维护；发布时将对应版本的条目用作 Release 说明，并补上发布日期。
 
+## 2.4.0（2026-10-27）
+
+versionCode：`11`。
+
+### 新增
+
+- **人民日报：新增第六目标（com.peopledailychina.activity · 7.4.3.1）**。
+  - **开屏广告直通秒开**：覆写开屏缓存读取（`sa.p#G0` 置零），使开屏分发调度器（`SplashHelper#c0`）直接走原生主页直达通道 `AppMainActivity#g0()` 启动主页渲染，跳过 `activity_splash` 布局渲染、倒计时及阿里云视频播放器；同时放行启动引导请求（`tb.e#c`），确保底部导航栏与首页首刷数据正常落地。
+  - **信息流与频道广告过滤**：基于阿里 mPaaS 组件流渲染机制，在组件解析器（`AbsSectionParser#parseLayoutManager` 与 `parseSection`）处熔断过滤所有带有 `customStyle$pd_ad_*` 契约 Key 的商业广告组件（长图、冠名卡、视频展播等），使列表不插入广告项且无空白槽位占位。
+  - **首页加载完毕自动签到**：挂钩主界面 `AppMainActivity`（`BaseActivity#onResume`），在首屏就绪后延时 2 秒调用宿主原生 `UserPointViewModel#pointSignIn()` 发起静默签到。具备登录态 Fail-Closed 校验（仅 `Boolean.TRUE` 放行，缺失/异常一律跳过）、按账号 `user_id` 隔离的每日持久化去重、10 分钟失败重试冷却（跨冷启动生效）与 45 秒回执看门狗；今日首次签到成功展示原生 Toast 轻反馈。
+  - **日志可见性兜底**：实测爱加密壳加载后，本进程的 INFO/WARN 级日志（含 LSPosed 模块日志）全部被吞，只有 ERROR 能出；本目标单独开启 logcat ERROR 级日志镜像，保证 hook 安装/失效不会静默。
+  - **爱加密加固时序对齐**：挂载统一走 `ctx.onAppReady`，在 `Application.attachBaseContext` 业务 DEX 解密完成后执行注入，保证安全与幂等。
+
 ## 2.3.4（2026-10-24）
 
 versionCode：`10`。

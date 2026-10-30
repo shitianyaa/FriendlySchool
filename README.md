@@ -32,7 +32,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.3.4`（versionCode `10`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.4.0`（versionCode `11`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -46,6 +46,7 @@
 | JMComic3 | 2.1.11 |
 | 光影边框 | 3.4.5（versionCode 34500） |
 | 酷安 | 16.6.4（versionCode 2609291） |
+| 人民日报 | 7.4.3.1（versionCode 7431） |
 
 **目标 App 更新建议（2026-10-24）**：**易校园与 WakeUp 课程表非必要不更新**——这两个目标的每次版本更新都会新增/更换广告 SDK 并重排混淆（易校园 7.8.7 新增 ZJ 广告 SDK 全套广告组件、WakeUp 6.6.0 混淆重排导致部分拦截失效），模块需要跟随适配。停留在已验证版本（易校园 7.8.7、WakeUp 6.5.0–6.6.0）净化效果最稳。
 
@@ -90,6 +91,12 @@
 
 - **信息流与回复列表去广告**：在列表处理前后过滤 `sponsor` 广告卡片，保留普通帖子与回复；
 - **开屏去广告**：两条展示路径都覆盖 —— 独立开屏页（含第三方 SDK 的开屏页）起后立即结束；嵌在主界面内的开屏 Fragment 走宿主原生的结束通道收尾，不留白、不卡顿。
+
+### 人民日报 · `com.peopledailychina.activity`
+
+- **开屏秒开直达**：覆写开屏缓存读取（置零），使调度器直接走官方原生直达通道启动首页 ViewPager 与导航栏，跳过开屏布局、倒计时与视频播放器；并放行启动引导请求，保障底部导航栏与首页首刷数据正常拉取；
+- **信息流广告过滤**：基于阿里 mPaaS 组件流渲染机制，在组件解析器处过滤拦截所有带有 `customStyle$pd_ad_*` 契约 Key 的商业广告组件（长图、冠名卡、视频展播等），使列表不插入广告且无空白槽位占位；
+- **首页就绪自动签到**：进入首页渲染完毕后，延时 2 秒调用官方原生积分接口（`UserPointViewModel#pointSignIn`）发起静默签到。带登录态 Fail-Closed 校验、按账号隔离的每日持久化去重、失败重试冷却与回执看门狗，今日首次签到成功展示轻量 Toast 反馈。
 
 ## ⚠️ 已知边界
 
@@ -141,9 +148,9 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.3.4.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.0.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-官方模块仓库的 Release 标题使用 `2.3.4`，标签使用 `10-2.3.4`，随 Release 上传 APK 并填写更新说明。
+官方模块仓库的 Release 标题使用 `2.4.0`，标签使用 `11-2.4.0`，随 Release 上传 APK 并填写更新说明。
 
 ## 📜 许可证
 

@@ -3,6 +3,7 @@ package com.yiran.friendlyschool.core;
 import com.yiran.friendlyschool.targets.CoolApkTarget;
 import com.yiran.friendlyschool.targets.GybkTarget;
 import com.yiran.friendlyschool.targets.JMComicTarget;
+import com.yiran.friendlyschool.targets.PeopleDailyTarget;
 import com.yiran.friendlyschool.targets.WakeUpTarget;
 import com.yiran.friendlyschool.targets.YiCampusTarget;
 
@@ -18,6 +19,7 @@ public final class Targets {
             new JMComicTarget(),
             new GybkTarget(),
             new CoolApkTarget(),
+            new PeopleDailyTarget(),
     };
 
     private Targets() {
