@@ -17,6 +17,11 @@ import java.lang.reflect.Proxy;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.Executor;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -70,6 +75,19 @@ public class PeopleDailyTarget extends SchoolTargetBase {
     private static final long RETRY_COOLDOWN_MS = 10 * 60 * 1000L;
     /** 回执看门狗：LiveData 观察者被提前摘除时，兜底释放 in-flight 名额 */
     private static final long INFLIGHT_TIMEOUT_MS = 45 * 1000L;
+
+    // 按进程串行写盘；空闲后退出工作线程，避免热重载后永久持有旧模块。
+    private static final Executor PREFS_WRITER = new ThreadPoolExecutor(
+            0, 1, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(), action -> {
+                Thread thread = new Thread(action, "FriendlySchool-PD-prefs");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private static final Executor PREFS_CALLBACK = action -> {
+        if (!new Handler(Looper.getMainLooper()).post(action)) {
+            throw new RejectedExecutionException("主线程不再接收签到持久化结果");
+        }
+    };
 
     // 登录态 / 账号身份方法（首次解析后缓存，避免每次 onResume 重复反射查找）
     private static volatile Method mIsLogin = null;
@@ -343,6 +361,22 @@ public class PeopleDailyTarget extends SchoolTargetBase {
         inflightSeq.compareAndSet(seq, 0L);
     }
 
+    /** 延时和写盘均可能跨越 Activity、账号或日期变化，发包前必须重新复核。 */
+    private boolean canDispatchSignIn(Activity activity, ClassLoader cl, String today,
+                                      String accountSuffix, String memoryKey, long seq) {
+        try {
+            return inflightSeq.get() == seq
+                    && !activity.isFinishing() && !activity.isDestroyed()
+                    && isUserLoggedIn(cl)
+                    && accountSuffix.equals(getAccountKeySuffix(cl))
+                    && !memoryKey.equals(lastSignDateWithAccount)
+                    && today.equals(new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date()));
+        } catch (Throwable t) {
+            log("自动签到跳过：发包前复核异常 " + t);
+            return false;
+        }
+    }
+
     private void scheduleAutoSignIn(final Activity activity, final ClassLoader cl) {
         // 1. Fail-Closed 登录态检查：只有确认已登录才继续调度
         if (!isUserLoggedIn(cl)) {
@@ -395,19 +429,26 @@ public class PeopleDailyTarget extends SchoolTargetBase {
 
         // 延时 2 秒在主线程运行，避开冷启动首屏与首页首刷网络高峰
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            // 延迟执行时二次复核：Activity 存活、仍处于登录态、且未被其他路径完成签到
-            if (activity.isFinishing() || activity.isDestroyed()
-                    || !isUserLoggedIn(cl)
-                    || memoryKey.equals(lastSignDateWithAccount)) {
+            if (!canDispatchSignIn(activity, cl, today, accountSuffix, memoryKey, seq)) {
                 releaseInflight(seq); // 复核未通过：不消耗冷却窗口
                 return;
             }
-            // 只有真正发包才写冷却时间戳
-            try {
-                sp.edit().putLong(attemptKey, System.currentTimeMillis()).apply();
-            } catch (Throwable ignored) {
-            }
-            executeAutoSignIn(activity, cl, sp, today, memoryKey, prefKey, seq);
+            // 后台确认冷却状态已落盘，持有名额直到主线程接续，未确认时绝不发包。
+            PeopleDailyPersistence.commit(PREFS_WRITER, PREFS_CALLBACK,
+                    () -> sp.edit().putLong(attemptKey, System.currentTimeMillis()).commit(),
+                    (saved, failure) -> {
+                        if (!saved || failure != null) {
+                            log("自动签到阻断：冷却状态写盘或主线程接续失败: "
+                                    + (failure != null ? failure : "commit 返回 false"));
+                            releaseInflight(seq);
+                            return;
+                        }
+                        if (!canDispatchSignIn(activity, cl, today, accountSuffix, memoryKey, seq)) {
+                            releaseInflight(seq);
+                            return;
+                        }
+                        executeAutoSignIn(activity, cl, sp, today, memoryKey, prefKey, seq);
+                    });
         }, 2000L);
     }
 
@@ -447,13 +488,28 @@ public class PeopleDailyTarget extends SchoolTargetBase {
                             }
 
                             // 2. 处理业务回调（接口只有成功/失败两个终止回调）
+                            boolean persistencePending = false;
                             try {
                                 if ("onPointSignInSuccess".equals(mName) && args != null && args.length > 0) {
+                                    // 服务端已成功：内存继续去重，写盘失败也不能立即重发已成功的请求。
                                     lastSignDateWithAccount = memoryKey;
-                                    try {
-                                        sp.edit().putString(prefKey, today).apply();
-                                    } catch (Throwable ignored) {
-                                    }
+                                    PeopleDailyPersistence.commit(PREFS_WRITER, PREFS_CALLBACK,
+                                            () -> sp.edit().putString(prefKey, today).commit(),
+                                            (saved, failure) -> {
+                                                try {
+                                                    if (!saved) {
+                                                        log("自动签到成功，但去重日期写盘失败: "
+                                                                + (failure != null ? failure : "commit 返回 false"));
+                                                    } else if (failure != null) {
+                                                        log("自动签到成功日期已持久化，但主线程结果投递失败: " + failure);
+                                                    } else {
+                                                        log("自动签到成功日期已持久化");
+                                                    }
+                                                } finally {
+                                                    releaseInflight(seq);
+                                                }
+                                            });
+                                    persistencePending = true;
 
                                     Object signInBean = args[0];
                                     String count = "0";
@@ -484,8 +540,10 @@ public class PeopleDailyTarget extends SchoolTargetBase {
                                     logOnce("自动签到接口返回失败: " + (args != null && args.length > 0 ? args[0] : ""));
                                 }
                             } finally {
-                                // 异步回执到达，释放 in-flight 名额
-                                releaseInflight(seq);
+                                // 成功回执等写盘结果再释放；失败/异常仍立即释放，旧代号不能影响新请求。
+                                if (!persistencePending) {
+                                    releaseInflight(seq);
+                                }
                             }
                             return null;
                         }
