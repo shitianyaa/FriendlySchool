@@ -2,6 +2,29 @@
 
 随改动维护；发布时将对应版本的条目用作 Release 说明，并补上发布日期。
 
+## 2.4.1（2026-11-03）
+
+versionCode：`12`。
+
+### 修复
+
+- **WakeUp 课程表 6.7.0（versionCode 560）底栏标签裁剪失效**。6.7.0 的 R8 把
+  tab adapter 类名从 `o0OO00Oo.OooOOO0` 换成了 `o0OOoO0o.o00oO0o`，且旧名
+  `o0OO00Oo.OooOOO0` 被换给了另一个无关类，按类名挂钩的候选全部落空。
+  - **锚点下沉到框架**：改挂 `ViewPager#setAdapter`，不再依赖任何混淆类名或
+    方法名。6.5.0 / 6.6.0 / 6.7.0 三个版本走同一入口（`NoScrollViewPager`
+    未 override 该方法），后续 App 升级无需再改模块。
+  - **判定改为三道**：tab 项携带的字符串（tab id 与显示名，如 `learn` /
+    `学习`）> Fragment 类名 > 靠右两项位置兜底。不调 `getPageTitle`——6.7.0
+    里它直接返回 null，标题由 `MainAiTitleTabView` 自行从 tab 项读取。
+  - **前置门禁**：adapter 必须持有 `List` 字段且列表长度 ≥ 3，避免误伤日期
+    翻页、广告 SDK 与图片浏览页的 ViewPager；位置兜底额外要求长度 ≥ 4 且宿主
+    是 `ScheduleActivity`。
+  - **删除按类名挂钩的构造器路径**：它会先删一项把列表缩到 3 项，导致
+    `setAdapter` 路径的长度门禁失效，“学习”因此漏删（6.7.0 真机复现）。
+  - **诊断可见**：命中时输出 `tab removed: cands=[...] frag=... @index N`；
+    列表过短时输出“跳过 ViewPager（列表仅 N 项）”，不再静默。
+
 ## 2.4.0（2026-10-27）
 
 versionCode：`11`。
