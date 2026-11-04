@@ -286,9 +286,12 @@ public class WakeUpTarget extends SchoolTargetBase {
 
     /**
      * 要从底部标签里剔掉的 Fragment：
-     *   aaa.learn.Oooo000            学习（卖课 hub）
+     *   aaa.learn.Oooo000            学习（卖课 hub）—— 6.7.0 已不存在，靠标题判据覆盖
      *   aaa.learn.AssistantFragment  表助手
      *   aaa.fragment.MineFragment    我的
+     *
+     * 注意：这个数组是“第二道”判据，类名每版都被 R8 重排，不能当唯一依据。
+     * 6.7.0 的学习页 Fragment 已经变成 o0OoOO.o00O0O，就是靠标题候选才删掉的。
      *
      * “我的”页整页都是 Compose 顺序调用（没有 LazyColumn、没有可过滤的 item 列表，
      * 已查 MineFragment$OooO0OO 与 o0O0oO0o.o0000OO0）。里面的会员卡片 / 9.9元包年 /
@@ -303,6 +306,19 @@ public class WakeUpTarget extends SchoolTargetBase {
             APP + "aaa.learn.AssistantFragment",
             APP + "aaa.fragment.MineFragment",
     };
+
+    /**
+     * 靠右两项的标题（“学习” / “我的”）—— 比类名硬得多的锚点。
+     *
+     * `"学习"` 与 `"我的"` 这两个字符串常量在 6.7.0 全 dex 中**只有**
+     * ScheduleActivity.onCreate 引用（`ddc findrefs string` 实测，引用点各一处），
+     * 就是构造底栏 tab 项的那两行。R8 重排类名与方法名，但不动业务字符串常量；
+     * 改文案等于改产品功能，概率极低。因此判据顺序是：标题 > Fragment 类名 > 位置。
+     */
+    private static final String[] REMOVED_TAB_TITLES = new String[] {"学习", "我的"};
+
+    /** 底栏宿主 Activity —— manifest 注册名，R8 不混淆，用作位置兜底的作用域门禁。 */
+    private static final String SCHEDULE_ACTIVITY = APP + "schedule.ScheduleActivity";
 
     // ------------------------------------------------------------ C组：launchmanager 任务拦截
 
@@ -419,7 +435,7 @@ public class WakeUpTarget extends SchoolTargetBase {
         }
 
         if (TRIM_LEARN_TABS) {
-            installTabTrim(cl);
+            installTabTrimByViewPager(cl);
         }
 
         // C组：底层广告子系统与隐私数据收集彻底灭活
@@ -1425,113 +1441,261 @@ public class WakeUpTarget extends SchoolTargetBase {
 
     // ------------------------------------------- 第二阶段：剪标签（由 TRIM_LEARN_TABS 控制，当前启用）
 
-    private void installTabTrim(ClassLoader cl) {
-        // adapter 双名回退：6.6.0 起标签构建搬进 ScheduleActivity.onCreate
-        // （new o0OO00Oo.OooOOO0(fm, list)），6.5.0 为 o0O0OOoo.OooOOO。
-        // R8 同名换人是常态：名字命中还须构造器形状（FragmentManager+List）相符
-        // 才接受，不符试下一候选——防误挂换人类的构造器并对其 List 元素乱反射。
-        // 原生开关 o0O0o0O.o00oO0o#OooOOOo 在 6.6.0 类已消失，List 过滤本就覆盖
-        // assistant，不再单独挂（6.5.0 上少一条双保险，裁剪结果不变）。
-        String[] adapterCandidates = {"o0OO00Oo.OooOOO0", "o0O0OOoo.OooOOO"};
-        Class<?> adapter = null;
-        String adapterName = null;
-        for (String cand : adapterCandidates) {
-            Class<?> c = Xp.findClassIfExists(cand, cl);
-            if (c == null) {
-                continue;
-            }
-            if (!AdapterCtorShape.hasFmListCtor(c, "androidx.fragment.app.FragmentManager")) {
-                log("标签裁剪: 候选 " + cand
-                        + " 存在但形状校验未通过（无 FragmentManager+List 构造器或枚举失败），试下一个");
-                continue;
-            }
-            adapter = c;
-            adapterName = cand;
-            break;
-        }
-        if (adapter == null) {
-            log("标签裁剪 hook FAILED: adapter 双名都不可用（不存在或形状不符："
-                    + "o0OO00Oo.OooOOO0 / o0O0OOoo.OooOOO）");
+    // 历史上这里还有一条“按 adapter 混淆类名 + 构造器形状”的快路径。已于 2026-11-03 删除：
+    // 它比框架锚点先执行，删掉“我的”后把列表从 4 项缩到 3 项，直接造成 setAdapter 路径的
+    // 长度门禁失效，“学习”因此漏删（6.7.0 真机复现）。两条路径互相踩，只能留一条——
+    // 而类名每版都被 R8 重排（6.5.0 o0O0OOoo.OooOOO / 6.6.0 o0OO00Oo.OooOOO0 /
+    // 6.7.0 o0OOoO0o.o00oO0o），留它就得每次升级改代码，与“不追类名”的目标相反。
+    // 现在唯一路径是下面的 installTabTrimByViewPager。
+
+    // ------------------------------------- 框架锚点：ViewPager.setAdapter（跨版本稳定）
+
+    /**
+     * 标签裁剪的稳定路径：挂 {@code androidx.viewpager.widget.ViewPager#setAdapter}。
+     *
+     * 为什么换到这个锚点：6.5.0 → 6.6.0 → 6.7.0 连续三个大版本，adapter 类名
+     * （o0O0OOoo.OooOOO / o0OO00Oo.OooOOO0 / o0OOoO0o.o00oO0o）与 tab 项类名全被 R8
+     * 重排，按名挂钩是必输的；而 setAdapter 是 androidx 框架 API，R8 不动框架签名。
+     * 三个版本的 ScheduleActivity.onCreate 都是 {@code new <adapter>(fm, list)} 之后
+     * 紧接 {@code NoScrollViewPager.setAdapter(...)}，且 NoScrollViewPager 未 override
+     * setAdapter（只 override setCurrentItem/setNoScroll/触摸），子类实例调用照样命中。
+     *
+     * 判定见 {@link TabTrimPolicy}：标题 > Fragment 类名 > 位置，三道任一命中即删。
+     */
+    private void installTabTrimByViewPager(ClassLoader cl) {
+        Class<?> vpCls = Xp.findClassIfExists("androidx.viewpager.widget.ViewPager", cl);
+        Class<?> paCls = Xp.findClassIfExists("androidx.viewpager.widget.PagerAdapter", cl);
+        if (vpCls == null || paCls == null) {
+            log("标签裁剪(ViewPager): 框架类不可用（vp=" + vpCls + ", pa=" + paCls + "）");
             return;
         }
-        // 之前用 findAndHookMethod(..., "<init>", FragmentManager, List) 会报
-        // NoSuchMethodError(#exact)，尽管反编译出来的签名看起来完全一致。
-        // 改用 Xp.hookAllConstructors：遍历 getDeclaredConstructors()，不做签名匹配，
-        // 直接在 args 里找 List。同时把真实签名打出来，下次不必再猜。
+        java.lang.reflect.Method setAdapter = Xp.findMethod(vpCls, "setAdapter", paCls);
+        if (setAdapter == null) {
+            log("标签裁剪(ViewPager): setAdapter(PagerAdapter) 未找到");
+            return;
+        }
         try {
-            for (java.lang.reflect.Constructor<?> c : adapter.getDeclaredConstructors()) {
-                logOnce("  adapter ctor: " + java.util.Arrays.toString(c.getParameterTypes()));
-            }
-            Xp.hookAllConstructors(adapter, chain -> {
-                java.util.List<Object> items = findListArg(chain.getArgs().toArray());
-                if (items == null) {
-                    logOnce("标签裁剪: 构造器 args 里没有 List: "
-                            + java.util.Arrays.toString(chain.getArgs().toArray()));
-                    return chain.proceed();
+            Xp.hook(setAdapter, chain -> {
+                try {
+                    Object arg0 = chain.getArgs().isEmpty() ? null : chain.getArgs().get(0);
+                    trimTabAdapter(chain.getThisObject(), arg0);
+                } catch (Throwable t) {
+                    // 裁剪是锦上添花，绝不能把宿主自己的 setAdapter 拖崩
+                    logOnce("标签裁剪(ViewPager): 裁剪异常 " + t);
                 }
-                // 就地改这个 List（构造器拿到的是同一个对象），所以 proceed() 用原参数就够
-                for (int i = items.size() - 1; i >= 0; i--) {
-                    String fqcn = tabFragmentName(items.get(i));
-                    if (fqcn != null && isRemovedTab(fqcn)) {
-                        items.remove(i);
-                        logOnce("tab removed: " + fqcn + " @index " + i);
-                    }
-                }
-                logOnce("标签裁剪完成，剩余 " + items.size() + " 个");
                 return chain.proceed();
             });
-            logOnce("hook installed: 标签裁剪 " + adapterName + " (hookAllConstructors)");
+            logOnce("hook installed: 标签裁剪 ViewPager.setAdapter（框架锚点）");
         } catch (Throwable t) {
-            log("标签裁剪 hook FAILED: " + t);
+            log("标签裁剪(ViewPager): 挂载失败 " + t);
         }
-    }
-
-    private java.util.List<Object> findListArg(Object[] args) {
-        if (args == null) {
-            return null;
-        }
-        for (Object a : args) {
-            if (a instanceof java.util.List) {
-                @SuppressWarnings("unchecked")
-                java.util.List<Object> l = (java.util.List<Object>) a;
-                return l;
-            }
-        }
-        return null;
-    }
-
-    private boolean isRemovedTab(String fqcn) {
-        for (String s : REMOVED_TABS) {
-            if (s.equals(fqcn)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
-     * 标签项是 o0O0OOoo.OooOOOO，它的 OooO00o() 返回 Fragment。
-     * 不用 Xp.callMethod（它要求名字可匹配唯一），直接反射找无参同名方法，更稳。
+     * 就地裁剪 adapter 持有的 tab 列表。
+     *
+     * 前置门禁（防误伤）：
+     *   1) adapter 必须持有 List 字段 —— CalendarFragment 里那个日期 ViewPager 的 adapter 是
+     *      {@code <init>(FragmentManager, int)}、字段是 int + Fragment，无 List 字段，自动排除；
+     *   2) 列表长度 ≥ 3 —— 底栏至少是「课表 / 日程 / 学习」三项（6.7.0 实测 4 项）。
+     * 广告 SDK（kwad interstitial）与图片浏览页的 ViewPager 不满足这两条。
      */
-    private String tabFragmentName(Object tabItem) {
-        if (tabItem == null) {
-            return null;
+    private void trimTabAdapter(Object viewPager, Object adapter) {
+        if (adapter == null) {
+            return;
         }
-        for (Class<?> c = tabItem.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
-            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
-                if (!m.getName().equals("OooO00o") || m.getParameterTypes().length != 0) {
-                    continue;
-                }
-                try {
-                    m.setAccessible(true);
-                    Object frag = m.invoke(tabItem);
-                    return frag == null ? null : frag.getClass().getName();
-                } catch (Throwable t) {
-                    return null;
+        java.util.List<Object> items = findListField(adapter);
+        if (items == null) {
+            // 不持有 List 字段：日期翻页 / 广告 / 图片浏览的 adapter，正常跳过
+            return;
+        }
+        if (items.size() < 3) {
+            // 空列表是广告 / 图片浏览 adapter 未装载时的常态，不吐日志；
+            // 1~2 项才值得提醒（可能是 App 改了底栏结构）。
+            if (!items.isEmpty()) {
+                logOnce("标签裁剪: 跳过 ViewPager（列表仅 " + items.size() + " 项）");
+            }
+            return;
+        }
+        int n = items.size();
+        java.util.List<java.util.List<String>> candidates =
+                new java.util.ArrayList<java.util.List<String>>(n);
+        for (int i = 0; i < n; i++) {
+            // tab 项形如 ("learn", "学习", Fragment)：两个字符串都在字段里，
+            // 而 6.7.0 的 getPageTitle() 直接返回 null，所以以字段扫描为主。
+            java.util.List<String> cands = tabItemStrings(items.get(i));
+            String pageTitle = pageTitleAt(adapter, i);
+            if (pageTitle != null && !cands.contains(pageTitle)) {
+                cands.add(pageTitle);
+            }
+            candidates.add(cands);
+        }
+        // 标题判据优先：命中就不碰 getItem —— PagerAdapter#getItem 会真的构造 Fragment
+        // （工厂里可能读 Context/SP/注册监听），而我们只需要类名。6.5.0–6.7.0 三个版本的
+        // tab 项都带「学习」/「我的」字符串，正常路径永远走不到下面的兜底分支。
+        int[] drop = TabTrimPolicy.decide(candidates, null, REMOVED_TAB_TITLES, REMOVED_TABS, false);
+        boolean byTitle = drop.length > 0;
+        java.util.List<String> fragments = null;
+        if (!byTitle) {
+            fragments = new java.util.ArrayList<String>(n);
+            for (int i = 0; i < n; i++) {
+                fragments.add(fragmentClassAt(adapter, i));
+            }
+            drop = TabTrimPolicy.decide(candidates, fragments, REMOVED_TAB_TITLES, REMOVED_TABS,
+                    isScheduleActivity(viewPager));
+        }
+        if (drop.length == 0) {
+            // 列表非空却没命中：要么底栏结构变了，要么这不是底栏。留一行可诊断的痕迹，
+            // 否则「hook installed 但无 tab removed」无法区分原因。
+            if (!items.isEmpty()) {
+                logOnce("标签裁剪: 未命中（" + n + " 项，宿主 " + hostName(viewPager) + "）");
+            }
+            return;
+        }
+        // 从后往前删，避免下标漂移
+        for (int k = drop.length - 1; k >= 0; k--) {
+            int idx = drop[k];
+            if (idx < 0 || idx >= items.size()) {
+                continue;
+            }
+            logOnce("tab removed: cands=" + candidates.get(idx)
+                    + (fragments == null ? "" : " frag=" + fragments.get(idx))
+                    + " @index " + idx + (byTitle ? "（标题判据）" : "（兜底判据）"));
+            items.remove(idx);
+        }
+        logOnce("标签裁剪完成: " + n + " -> " + items.size() + " 项");
+    }
+
+    /**
+     * 取一个 tab 项对象里所有 String 实例字段的值。
+     *
+     * 不调 {@code OooO0O0()} / {@code OooO0OO()} 这类混淆方法名，也不靠 getPageTitle
+     * （6.7.0 直接返回 null）——只按字段类型扫描。tab 项字段固定是
+     * {@code String id + String 显示名 + Fragment}，所以能拿到 "learn" 与 "学习" 两个值。
+     */
+    private java.util.List<String> tabItemStrings(Object item) {
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        if (item == null) {
+            return out;
+        }
+        try {
+            for (Class<?> c = item.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                    if (f.getType() != String.class) {
+                        continue;
+                    }
+                    f.setAccessible(true);
+                    Object v = f.get(item);
+                    if (v instanceof String) {
+                        out.add((String) v);
+                    }
                 }
             }
+        } catch (Throwable ignored) {
+            // 字段不可读就当没有候选，交由类名/位置判据
+        }
+        return out;
+    }
+
+    /** 取 adapter 里第一个 List 类型实例字段的值（字段名被混淆，按类型找）。 */
+    private java.util.List<Object> findListField(Object adapter) {
+        try {
+            for (Class<?> c = adapter.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                    if (!java.util.List.class.isAssignableFrom(f.getType())) {
+                        continue;
+                    }
+                    f.setAccessible(true);
+                    Object v = f.get(adapter);
+                    if (v instanceof java.util.List) {
+                        @SuppressWarnings("unchecked")
+                        java.util.List<Object> l = (java.util.List<Object>) v;
+                        return l;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // 字段不可读就当没有，调用方原样放行
         }
         return null;
+    }
+
+    /** {@code PagerAdapter.getPageTitle(i)} 的字符串形式；取不到返回 null。 */
+    private String pageTitleAt(Object adapter, int index) {
+        try {
+            java.lang.reflect.Method m = Xp.findMethod(adapter.getClass(), "getPageTitle", int.class);
+            if (m == null) {
+                return null;
+            }
+            m.setAccessible(true);
+            Object v = m.invoke(adapter, index);
+            return v == null ? null : v.toString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** {@code PagerAdapter.getItem(i)} 的类名；取不到返回 null。 */
+    private String fragmentClassAt(Object adapter, int index) {
+        try {
+            java.lang.reflect.Method m = Xp.findMethod(adapter.getClass(), "getItem", int.class);
+            if (m == null) {
+                return null;
+            }
+            m.setAccessible(true);
+            Object v = m.invoke(adapter, index);
+            return v == null ? null : v.getClass().getName();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** ViewPager 宿主 Activity 的类名，仅用于诊断日志。 */
+    private String hostName(Object viewPager) {
+        try {
+            java.lang.reflect.Method getCtx = Xp.findMethod(viewPager.getClass(), "getContext");
+            if (getCtx == null) {
+                return "?";
+            }
+            Object ctx = getCtx.invoke(viewPager);
+            for (int guard = 0; ctx != null && guard < 8; guard++) {
+                if (ctx instanceof android.app.Activity) {
+                    return ctx.getClass().getName();
+                }
+                if (ctx instanceof android.content.ContextWrapper) {
+                    ctx = ((android.content.ContextWrapper) ctx).getBaseContext();
+                } else {
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 诊断日志取不到宿主就算了，不影响裁剪
+        }
+        return "?";
+    }
+
+    /** ViewPager 的 context 是否就是底栏宿主 Activity（沿 ContextWrapper 链上找）。 */
+    private boolean isScheduleActivity(Object viewPager) {
+        try {
+            java.lang.reflect.Method getCtx = Xp.findMethod(viewPager.getClass(), "getContext");
+            if (getCtx == null) {
+                return false;
+            }
+            Object ctx = getCtx.invoke(viewPager);
+            for (int guard = 0; ctx != null && guard < 8; guard++) {
+                if (SCHEDULE_ACTIVITY.equals(ctx.getClass().getName())) {
+                    return true;
+                }
+                if (ctx instanceof android.content.ContextWrapper) {
+                    ctx = ((android.content.ContextWrapper) ctx).getBaseContext();
+                } else {
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 拿不到 context 就不做位置兜底，宁可少删
+        }
+        return false;
     }
 
     // ---------------------------------------------------------------- 工具
