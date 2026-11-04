@@ -1520,7 +1520,6 @@ public class WakeUpTarget extends SchoolTargetBase {
         int n = items.size();
         java.util.List<java.util.List<String>> candidates =
                 new java.util.ArrayList<java.util.List<String>>(n);
-        java.util.List<String> fragments = new java.util.ArrayList<String>(n);
         for (int i = 0; i < n; i++) {
             // tab 项形如 ("learn", "学习", Fragment)：两个字符串都在字段里，
             // 而 6.7.0 的 getPageTitle() 直接返回 null，所以以字段扫描为主。
@@ -1530,11 +1529,27 @@ public class WakeUpTarget extends SchoolTargetBase {
                 cands.add(pageTitle);
             }
             candidates.add(cands);
-            fragments.add(fragmentClassAt(adapter, i));
         }
-        int[] drop = TabTrimPolicy.decide(candidates, fragments, REMOVED_TAB_TITLES, REMOVED_TABS,
-                isScheduleActivity(viewPager));
+        // 标题判据优先：命中就不碰 getItem —— PagerAdapter#getItem 会真的构造 Fragment
+        // （工厂里可能读 Context/SP/注册监听），而我们只需要类名。6.5.0–6.7.0 三个版本的
+        // tab 项都带「学习」/「我的」字符串，正常路径永远走不到下面的兜底分支。
+        int[] drop = TabTrimPolicy.decide(candidates, null, REMOVED_TAB_TITLES, REMOVED_TABS, false);
+        boolean byTitle = drop.length > 0;
+        java.util.List<String> fragments = null;
+        if (!byTitle) {
+            fragments = new java.util.ArrayList<String>(n);
+            for (int i = 0; i < n; i++) {
+                fragments.add(fragmentClassAt(adapter, i));
+            }
+            drop = TabTrimPolicy.decide(candidates, fragments, REMOVED_TAB_TITLES, REMOVED_TABS,
+                    isScheduleActivity(viewPager));
+        }
         if (drop.length == 0) {
+            // 列表非空却没命中：要么底栏结构变了，要么这不是底栏。留一行可诊断的痕迹，
+            // 否则「hook installed 但无 tab removed」无法区分原因。
+            if (!items.isEmpty()) {
+                logOnce("标签裁剪: 未命中（" + n + " 项，宿主 " + hostName(viewPager) + "）");
+            }
             return;
         }
         // 从后往前删，避免下标漂移
@@ -1544,7 +1559,8 @@ public class WakeUpTarget extends SchoolTargetBase {
                 continue;
             }
             logOnce("tab removed: cands=" + candidates.get(idx)
-                    + " frag=" + fragments.get(idx) + " @index " + idx);
+                    + (fragments == null ? "" : " frag=" + fragments.get(idx))
+                    + " @index " + idx + (byTitle ? "（标题判据）" : "（兜底判据）"));
             items.remove(idx);
         }
         logOnce("标签裁剪完成: " + n + " -> " + items.size() + " 项");
@@ -1632,6 +1648,30 @@ public class WakeUpTarget extends SchoolTargetBase {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /** ViewPager 宿主 Activity 的类名，仅用于诊断日志。 */
+    private String hostName(Object viewPager) {
+        try {
+            java.lang.reflect.Method getCtx = Xp.findMethod(viewPager.getClass(), "getContext");
+            if (getCtx == null) {
+                return "?";
+            }
+            Object ctx = getCtx.invoke(viewPager);
+            for (int guard = 0; ctx != null && guard < 8; guard++) {
+                if (ctx instanceof android.app.Activity) {
+                    return ctx.getClass().getName();
+                }
+                if (ctx instanceof android.content.ContextWrapper) {
+                    ctx = ((android.content.ContextWrapper) ctx).getBaseContext();
+                } else {
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 诊断日志取不到宿主就算了，不影响裁剪
+        }
+        return "?";
     }
 
     /** ViewPager 的 context 是否就是底栏宿主 Activity（沿 ContextWrapper 链上找）。 */
