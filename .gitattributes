@@ -1,2 +1,5 @@
 * text=auto
 *.sh text eol=lf
+# 直接打进 APK 的元数据：行尾必须固定，否则同一 commit 在 CRLF/LF 两种 checkout 下
+# 会构建出不同哈希（实测 worktree CRLF vs 主工作区 LF 差异只在 MOD.SF/MANIFEST.MF 摘要）
+module/meta/META-INF/xposed/* text eol=lf
