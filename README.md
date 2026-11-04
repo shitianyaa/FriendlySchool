@@ -32,7 +32,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.4.0`（versionCode `11`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.4.1`（versionCode `12`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -42,13 +42,13 @@
 | 应用 | 已分析 / 验证的版本 |
 |---|---|
 | 易校园 | 7.8.7 |
-| WakeUp 课程表 | 6.5.0–6.6.0（versionCode 540–550） |
+| WakeUp 课程表 | 6.5.0–6.7.0（versionCode 540–560） |
 | JMComic3 | 2.1.11 |
 | 光影边框 | 3.4.5（versionCode 34500） |
 | 酷安 | 16.6.4（versionCode 2609291） |
 | 人民日报 | 7.4.3.1–7.4.3.2（versionCode 7431–7432） |
 
-**目标 App 更新建议（2026-10-24）**：**易校园与 WakeUp 课程表非必要不更新**——这两个目标的每次版本更新都会新增/更换广告 SDK 并重排混淆（易校园 7.8.7 新增 ZJ 广告 SDK 全套广告组件、WakeUp 6.6.0 混淆重排导致部分拦截失效），模块需要跟随适配。停留在已验证版本（易校园 7.8.7、WakeUp 6.5.0–6.6.0）净化效果最稳。
+**目标 App 更新建议（2026-11-03）**：**易校园与 WakeUp 课程表非必要不更新**——这两个目标的每次版本更新都会新增/更换广告 SDK 并重排混淆（易校园 7.8.7 新增 ZJ 广告 SDK 全套广告组件、WakeUp 6.6.0 / 6.7.0 混淆重排导致标签裁剪失效，均已适配），模块需要跟随适配。停留在已验证版本（易校园 7.8.7、WakeUp 6.5.0–6.7.0）净化效果最稳。
 
 ## ✨ 支持的应用
 
@@ -148,9 +148,9 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.0.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-官方模块仓库的 Release 标题使用 `2.4.0`，标签使用 `11-2.4.0`，随 Release 上传 APK 并填写更新说明。
+官方模块仓库的 Release 标题使用 `2.4.1`，标签使用 `12-2.4.1`，随 Release 上传 APK 并填写更新说明。
 
 ## 📜 许可证
 
