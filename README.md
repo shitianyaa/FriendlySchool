@@ -27,7 +27,7 @@
 做法上以**拦出口**为主：被拦的广告接口返回「该广告位已关闭」这类成功空响应，让 App 走它自己既有的正常分支，
 而不是把请求打断、把状态机掐死。
 
-**安装**：[下载 APK](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)（本仓只维护源码，安装包由官方模块收录仓分发）→ 装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（目标已在模块里声明，通常无需手动挑选）。
+**安装**：[下载 APK](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)（官方模块收录仓分发；本仓 [Release](https://github.com/shitianyaa/FriendlySchool/releases) 同步一份同哈希镜像）→ 装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（目标已在模块里声明，通常无需手动挑选）。
 
 ## 兼容与版本
 
