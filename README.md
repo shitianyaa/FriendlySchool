@@ -27,7 +27,9 @@
 做法上以**拦出口**为主：被拦的广告接口返回「该广告位已关闭」这类成功空响应，让 App 走它自己既有的正常分支，
 而不是把请求打断、把状态机掐死。
 
-**安装**：[下载 APK](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)（本仓只维护源码，安装包由官方模块收录仓分发）→ 装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（目标已在模块里声明，通常无需手动挑选）。
+**安装**：[下载 APK](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool/releases/latest)（官方模块收录仓，始终为最新版）→ 装好 APK → 在 LSPosed 里启用本模块 → 重启目标 App（目标已在模块里声明，通常无需手动挑选）。
+
+> 本仓 [Release](https://github.com/shitianyaa/FriendlySchool/releases) 同步一份同哈希镜像，可能滞后于官方仓；两者不一致时以官方仓为准。
 
 ## 兼容与版本
 
@@ -151,6 +153,8 @@ bash build.sh
 构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
 官方模块仓库的 Release 标题使用 `2.4.1`，标签使用 `12-2.4.1`，随 Release 上传 APK 并填写更新说明。
+
+发布后同步个人仓镜像：个人仓 Release 标签用 `v2.4.1`，上传同一份 APK，两处 asset 哈希必须一致。顺序上先发官方仓、再发镜像；README 的安装入口始终指向官方仓，所以镜像未及时更新时用户不会装到旧版。
 
 ## 📜 许可证
 
