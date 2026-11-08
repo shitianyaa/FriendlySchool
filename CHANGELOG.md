@@ -2,6 +2,13 @@
 
 随改动维护；发布时将对应版本的条目用作 Release 说明，并补上发布日期。
 
+## 未发布
+
+### 构建
+
+- 新增独立的 Linux 原生构建脚本 `build-linux.sh`，保留 Windows 脚本不变；支持 SDK/JDK 路径配置、既有密钥复用，以及与 Windows 相同的 APK 输出与现代打包校验。
+- Linux 使用 SDK 命令行工具中的新版 D8，解决 Build Tools 34 自带旧 D8 与 JDK 21 编译产物的兼容问题。
+
 ## 2.4.1（2026-11-03）
 
 versionCode：`12`。

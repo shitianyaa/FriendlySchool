@@ -136,9 +136,11 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 
 源码仓库：[shitianyaa/FriendlySchool](https://github.com/shitianyaa/FriendlySchool)。官方模块收录仓 [Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool) 用于说明与 APK Release，源码在个人仓库维护。
 
-构建不依赖 Gradle，使用 Windows 上的 JDK 17 或以上、Android SDK Build Tools 34.0.0 与 Android 34 平台。脚本内置本机默认路径，可用 `JDK_W`、`BT_W`、`AJ_W` 环境变量覆盖为各自环境。
+构建不依赖 Gradle，使用 JDK 17 或以上、Android SDK Build Tools 34.0.0 与 Android 34 平台。
 
-在源码根目录执行：
+### Windows
+
+保留原有 `build.sh` / `build.ps1`，脚本内置 Windows 默认路径，可用 `JDK_W`、`BT_W`、`AJ_W` 环境变量覆盖。在源码根目录执行：
 
 ```powershell
 # PowerShell
@@ -149,6 +151,31 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 # Windows Git Bash（需要 cygpath）
 bash build.sh
 ```
+
+### Linux
+
+使用独立的 `build-linux.sh`，需要 Bash 4.4+、GNU 常用工具、`unzip`，以及 **Android SDK Command-Line Tools 22.0** 中的新版 D8。Build Tools 34 自带的旧 D8 无法处理本机 JDK 21 生成的无名参数元数据；Linux 脚本明确使用命令行工具中的 D8，其余打包工具仍来自 Build Tools 34.0.0。已验证 JDK 21 + D8 9.3.16。
+
+```bash
+bash build-linux.sh
+```
+
+不需要将 SDK 工具加入 `PATH`，不需要 `cygpath`。SDK 根目录依次取 `ANDROID_HOME`、`ANDROID_SDK_ROOT`、`/opt/android-sdk`；设置了 `JAVA_HOME` 时使用其中的 JDK，否则从 `PATH` 查找 Java 工具。
+
+| 可选环境变量 | 默认值 / 用途 |
+|---|---|
+| `BT` | `$SDK_ROOT/build-tools/34.0.0` |
+| `AJ` | `$SDK_ROOT/platforms/android-34/android.jar` |
+| `D8` | `$SDK_ROOT/cmdline-tools/latest/bin/d8`，可指定其他兼容版本的可执行文件路径 |
+| `APPDIR` | 仓库根目录下的 `dist/`，指定交付目录 |
+
+例如 SDK 安装在用户目录时：
+
+```bash
+ANDROID_HOME="$HOME/Android/Sdk" bash build-linux.sh
+```
+
+### 产物与签名
 
 构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
