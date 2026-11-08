@@ -4,6 +4,7 @@ import com.yiran.friendlyschool.targets.CoolApkTarget;
 import com.yiran.friendlyschool.targets.GybkTarget;
 import com.yiran.friendlyschool.targets.JMComicTarget;
 import com.yiran.friendlyschool.targets.PeopleDailyTarget;
+import com.yiran.friendlyschool.targets.QuZhiCampusTarget;
 import com.yiran.friendlyschool.targets.WakeUpTarget;
 import com.yiran.friendlyschool.targets.YiCampusTarget;
 
@@ -20,6 +21,7 @@ public final class Targets {
             new GybkTarget(),
             new CoolApkTarget(),
             new PeopleDailyTarget(),
+            new QuZhiCampusTarget(),
     };
 
     private Targets() {
