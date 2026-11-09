@@ -162,11 +162,13 @@ bash build.sh
 
 ### Linux
 
-使用独立的 `build-linux.sh`，需要 Bash 4.4+、GNU 常用工具、`unzip`，以及 **Android SDK Command-Line Tools 22.0** 中的新版 D8。Build Tools 34 自带的旧 D8 无法处理本机 JDK 21 生成的无名参数元数据；Linux 脚本明确使用命令行工具中的 D8，其余打包工具仍来自 Build Tools 34.0.0。已验证 JDK 21 + D8 9.3.16。
+使用独立的 `build-linux.sh`，需要 Bash 4.4+、GNU 常用工具、`unzip`、util-linux 的 `flock`，以及 **Android SDK Command-Line Tools 22.0** 中的新版 D8。Build Tools 34 自带的旧 D8 无法处理本机 JDK 21 生成的无名参数元数据；Linux 脚本明确使用命令行工具中的 D8，其余打包工具仍来自 Build Tools 34.0.0。已验证 JDK 21 + D8 9.3.16。
 
 ```bash
 bash build-linux.sh
 ```
+
+同一工作区的 Linux 构建使用 `module/.build-linux.lock` 互斥；已有构建运行时，新调用立即报错，不清理在途产物。锁由进程持有并自动释放，锁文件留存属于正常现象，请勿删除运行中的锁文件。
 
 不需要将 SDK 工具加入 `PATH`，不需要 `cygpath`。SDK 根目录依次取 `ANDROID_HOME`、`ANDROID_SDK_ROOT`、`/opt/android-sdk`；设置了 `JAVA_HOME` 时使用其中的 JDK，否则从 `PATH` 查找 Java 工具。
 
@@ -186,6 +188,10 @@ ANDROID_HOME="$HOME/Android/Sdk" bash build-linux.sh
 ### 产物与签名
 
 构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+
+Linux 首次生成密钥时，先写入 `module/mod.keystore.tmp.*/` 私有临时目录，成功后再原子移动到正式路径；新密钥权限为 `0600`。已有密钥和密码保持原样，损坏或密码不匹配时明确失败，不自动删除或重建签名身份。
+
+Linux 交付 APK 时，先复制到交付目录中的临时文件，再原子替换目标 APK；复制失败时保留上一次的完整产物。正常退出和捕获到 `SIGINT` / `SIGTERM` 时清理本次临时文件；不可捕获的终止或断电可能留下临时文件，临时密钥目录也已加入忽略规则，避免误提交。
 
 官方模块仓库的 Release 标题使用 `2.4.1`，标签使用 `12-2.4.1`，随 Release 上传 APK 并填写更新说明。
 

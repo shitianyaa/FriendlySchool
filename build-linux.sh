@@ -40,14 +40,32 @@ fail() {
   exit 1
 }
 
+KEY_TMP_DIR=""
+FINAL_TMP=""
+cleanup() {
+  if [ -n "$KEY_TMP_DIR" ]; then
+    rm -rf -- "$KEY_TMP_DIR"
+  fi
+  if [ -n "$FINAL_TMP" ]; then
+    rm -f -- "$FINAL_TMP"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 for tool in "$D8" "$AAPT2" "$AAPT" "$ZIPALIGN" "$APKSIGNER" \
-  "$JAVAC" "$JAR" "$KEYTOOL" unzip; do
+  "$JAVAC" "$JAR" "$KEYTOOL" unzip flock; do
   command -v "$tool" >/dev/null 2>&1 || fail "缺少可执行工具: $tool"
 done
 for file in "$AJ" "$API" "$MANIFEST" \
   "$META_DIR/java_init.list" "$META_DIR/module.prop" "$META_DIR/scope.list"; do
   [ -f "$file" ] || fail "缺少依赖文件: $file"
 done
+
+# 锁文件不能放进会被 rm -rf 的 OUT；保持同一 inode 才能覆盖整个构建周期。
+exec {BUILD_LOCK_FD}>"$MOD/.build-linux.lock"
+flock -n "$BUILD_LOCK_FD" || fail "已有构建正在运行，未清理输出: $MOD/.build-linux.lock"
 
 ENTRY_CLASS="$(tr -d ' \r\n' < "$META_DIR/java_init.list")"
 
@@ -100,9 +118,16 @@ cp "$OUT/base.apk" "$OUT/unsigned.apk"
 
 echo "[7/7] zipalign + 签名"
 if [ ! -e "$KS" ]; then
-  "$KEYTOOL" -genkeypair -keystore "$KS" -alias mod \
-    -keyalg RSA -keysize 2048 -validity 10000 \
-    -storepass android -keypass android -dname "CN=friendlyschool, O=local"
+  # 临时目录与最终密钥位于同一文件系统；只有 keytool 成功后才发布密钥。
+  # 不直接使用 mktemp 创建的空文件，keytool 会将其视为已存在的损坏 keystore。
+  KEY_TMP_DIR="$(mktemp -d "$MOD/mod.keystore.tmp.XXXXXX")"
+  (
+    umask 077
+    "$KEYTOOL" -genkeypair -keystore "$KEY_TMP_DIR/mod.keystore" -alias mod \
+      -keyalg RSA -keysize 2048 -validity 10000 \
+      -storepass android -keypass android -dname "CN=friendlyschool, O=local"
+  )
+  mv -- "$KEY_TMP_DIR/mod.keystore" "$KS"
   echo "      新建 keystore（之后重建复用）: $KS"
 else
   echo "      复用已有 keystore: $KS"
@@ -155,5 +180,9 @@ sha256sum "$OUT/module.apk"
 
 mkdir -p "$APPDIR"
 FINAL="$APPDIR/$APK_NAME"
-cp "$OUT/module.apk" "$FINAL"
+# 临时文件必须位于交付目录，确保最后的 rename 原子替换；失败时保留旧 APK。
+FINAL_TMP="$(mktemp "$APPDIR/.${APK_NAME}.tmp.XXXXXX")"
+cp --preserve=mode -- "$OUT/module.apk" "$FINAL_TMP"
+mv -f -- "$FINAL_TMP" "$FINAL"
+FINAL_TMP=""
 echo "已复制构建产物: $FINAL"
