@@ -34,7 +34,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前源码版本：`2.5.0`（versionCode `13`，待发布）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.5.0`（versionCode `13`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -208,7 +208,7 @@ Linux 仅在未指定 `KEYSTORE` 且默认本地密钥不存在时创建测试�
 
 Linux 交付 APK 时，先复制到交付目录中的临时文件，再原子替换目标 APK；复制失败时保留上一次的完整产物。正常退出和捕获到 `SIGINT` / `SIGTERM` 时清理本次临时文件；不可捕获的终止或断电可能留下临时文件，临时密钥目录也已加入忽略规则，避免误提交。
 
-发版时，官方模块仓库的 Release 标题使用 `2.5.0`，标签使用 `13-2.5.0`，随 Release 上传 APK 并填写更新说明；同时将 changelog 的“待发布”补为实际发布日期。
+官方模块仓库的 Release 标题使用 `2.5.0`，标签使用 `13-2.5.0`，随 Release 上传 APK，并使用 changelog 的 2.5.0 条目作为更新说明。
 
 发布后同步个人仓镜像：个人仓 Release 标签用 `v2.5.0`，上传同一份 APK，两处 asset 哈希必须一致。顺序上先发官方仓、再发镜像；README 的安装入口始终指向官方仓，所以镜像未及时更新时用户不会装到旧版。
 
