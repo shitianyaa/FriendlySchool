@@ -34,7 +34,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.4.1`（versionCode `12`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前源码版本：`2.5.0`（versionCode `13`，待发布）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -198,7 +198,7 @@ ANDROID_HOME="$HOME/Android/Sdk" bash build-linux.sh
 
 ### 产物与签名
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.5.0.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
 Linux 仅在未指定 `KEYSTORE` 且默认本地密钥不存在时创建测试签名身份；密码需由调用方提供，建议使用密码管理器生成。密钥先写入 `module/mod.keystore.tmp.*/` 私有临时目录，成功后再原子移动到正式路径，新密钥权限为 `0600`。已有默认本地密钥只收紧文件权限，内容和密码不变；损坏或密码错误时明确失败，不自动重建。
 
@@ -208,9 +208,9 @@ Linux 仅在未指定 `KEYSTORE` 且默认本地密钥不存在时创建测试�
 
 Linux 交付 APK 时，先复制到交付目录中的临时文件，再原子替换目标 APK；复制失败时保留上一次的完整产物。正常退出和捕获到 `SIGINT` / `SIGTERM` 时清理本次临时文件；不可捕获的终止或断电可能留下临时文件，临时密钥目录也已加入忽略规则，避免误提交。
 
-官方模块仓库的 Release 标题使用 `2.4.1`，标签使用 `12-2.4.1`，随 Release 上传 APK 并填写更新说明。
+发版时，官方模块仓库的 Release 标题使用 `2.5.0`，标签使用 `13-2.5.0`，随 Release 上传 APK 并填写更新说明；同时将 changelog 的“待发布”补为实际发布日期。
 
-发布后同步个人仓镜像：个人仓 Release 标签用 `v2.4.1`，上传同一份 APK，两处 asset 哈希必须一致。顺序上先发官方仓、再发镜像；README 的安装入口始终指向官方仓，所以镜像未及时更新时用户不会装到旧版。
+发布后同步个人仓镜像：个人仓 Release 标签用 `v2.5.0`，上传同一份 APK，两处 asset 哈希必须一致。顺序上先发官方仓、再发镜像；README 的安装入口始终指向官方仓，所以镜像未及时更新时用户不会装到旧版。
 
 ## 📜 许可证
 

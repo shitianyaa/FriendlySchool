@@ -12,7 +12,7 @@ KS="${KEYSTORE:-$MOD/mod.keystore}"
 META_DIR="$MOD/meta/META-INF/xposed"
 MANIFEST="$MOD/AndroidManifest.xml"
 APPDIR="${APPDIR:-$ROOT/dist}"
-APK_NAME="FriendlySchool-LSPosed-v2.4.1.apk"
+APK_NAME="FriendlySchool-LSPosed-v2.5.0.apk"
 
 fail() {
   echo "$*" >&2
