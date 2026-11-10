@@ -34,7 +34,7 @@
 ## 兼容与版本
 
 - Android 8.0（API 26）及以上；使用支持 **libxposed API 102** 的 LSPosed 框架。
-- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.4.1`（versionCode `12`）。
+- 模块包名：`io.github.shitianyaa.friendlyschool`；当前版本：`2.5.0`（versionCode `13`）。
 - 版本变更见 [更新日志](CHANGELOG.md)。
 - **仅 LSPosed 入口**：不提供桌面入口，请在 LSPosed 管理器中启用并管理模块。
 - 旧包名 `com.yiran.friendlyschool` 与本包可并存。迁移时先停用旧模块，再启用本模块并重启目标 App，避免重复 Hook。
@@ -49,6 +49,7 @@
 | 光影边框 | 3.4.5（versionCode 34500） |
 | 酷安 | 16.6.4（versionCode 2609291） |
 | 人民日报 | 7.4.3.1–7.4.3.2（versionCode 7431–7432） |
+| 趣智校园 | 6.5.30（versionCode 680） |
 
 **目标 App 更新建议（2026-11-03）**：**易校园与 WakeUp 课程表非必要不更新**——这两个目标的每次版本更新都会新增/更换广告 SDK 并重排混淆（易校园 7.8.7 新增 ZJ 广告 SDK 全套广告组件、WakeUp 6.6.0 / 6.7.0 混淆重排导致标签裁剪失效，均已适配），模块需要跟随适配。停留在已验证版本（易校园 7.8.7、WakeUp 6.5.0–6.7.0）净化效果最稳。
 
@@ -100,6 +101,12 @@
 - **信息流去广告**：信息流与各频道的商业推广卡片（长图、冠名卡、视频展播等）全部过滤，列表不留空白占位；
 - **首页自动签到**：每天进入首页后自动完成积分签到，成功给一次轻提示；未登录不执行，同一天不重复签，失败会自动重试，换账号后按账号分别记录。
 
+### 趣智校园 · `com.klcxkj.zqxy`
+
+- **广告开关收口**：仅在读取侧清空应用的广告类型配置，让开屏、插屏及多家 SDK 广告位走宿主原有的关闭分支；启动广告阶段保留原生登录 / 主页分流，不修改隐私同意状态。
+- **首页精简**：收起商业横幅及其专属容器、活动推广、赚现金任务与外卖返现区；底栏营销图标恢复为原生扫码入口。保留八项校园设备服务、学校选择和消息入口。
+- **保留真实业务**：不修改账号、余额、优惠券、充值 / 支付及设备使用配置。真机已验证首页刷新、钱包 / 客服 / 我的导航；未执行真实充值、扣费或设备消费。
+
 ## ⚠️ 已知边界
 
 - **目标 App 升级后可能失效**：升级会改类名/方法名，这是所有 Xposed 模块的共同宿命；日志里会明确写出「找不到」的行。
@@ -110,6 +117,7 @@
 - **易校园拦 shell 的副作用**：App 自带的网速探测会失败；易校园自己的设备指纹持久化不在本模块范围内。
 - **JMComic3 会以你自己的账号发少量请求**：签到（读日历 →[未签则]提交 → 回读校验；服务端「写后读」有延迟时最多再重读 5 次，故约 3~8 个请求）与一次有界的启动期状态采样（每 3 秒一次、最多 100 次，约 5 分钟后自停）。
 - **JMComic3 冷启动首页空白会自愈**：约一半概率清晨冷启动后首页空白（App 自身在广告被清空后的竞态，详见 CHANGELOG 2.3.3）。模块检测到该状态会让页面**自动重载一次**（`sessionStorage.state` 跨重载存活，直接进首页）；命中时你会看到约 1~2 秒的刷新。
+- **趣智校园适配范围**：仅验证 6.5.30（680）。广告任务与激励功能可能不可用，不伪造广告观看成功或奖励；校园消息及原有优惠券入口保留。其它版本的混淆名与布局变化需要重新核对。
 - **有被服务端风控识别的可能**：改客户端行为总有这个风险，请自行评估。
 
 ## ⚖️ 免责声明
@@ -136,9 +144,11 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 
 源码仓库：[shitianyaa/FriendlySchool](https://github.com/shitianyaa/FriendlySchool)。官方模块收录仓 [Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool](https://github.com/Xposed-Modules-Repo/io.github.shitianyaa.friendlyschool) 用于说明与 APK Release，源码在个人仓库维护。
 
-构建不依赖 Gradle，使用 Windows 上的 JDK 17 或以上、Android SDK Build Tools 34.0.0 与 Android 34 平台。脚本内置本机默认路径，可用 `JDK_W`、`BT_W`、`AJ_W` 环境变量覆盖为各自环境。
+构建不依赖 Gradle，使用 JDK 17 或以上、Android SDK Build Tools 34.0.0 与 Android 34 平台。
 
-在源码根目录执行：
+### Windows
+
+保留原有 `build.sh` / `build.ps1`，脚本内置 Windows 默认路径，可用 `JDK_W`、`BT_W`、`AJ_W` 环境变量覆盖。在源码根目录执行：
 
 ```powershell
 # PowerShell
@@ -150,11 +160,57 @@ FriendlySchool 仅供 Android、LSPosed 相关技术研究、学习交流及个�
 bash build.sh
 ```
 
-构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+### Linux
 
-官方模块仓库的 Release 标题使用 `2.4.1`，标签使用 `12-2.4.1`，随 Release 上传 APK 并填写更新说明。
+使用独立的 `build-linux.sh`，需要 Bash 4.4+、GNU 常用工具、`unzip`、util-linux 的 `flock`，以及 **Android SDK Command-Line Tools 22.0** 中的新版 D8。Build Tools 34 自带的旧 D8 无法处理本机 JDK 21 生成的无名参数元数据；Linux 脚本明确使用命令行工具中的 D8，其余打包工具仍来自 Build Tools 34.0.0。已验证 JDK 21 + D8 9.3.16。
 
-发布后同步个人仓镜像：个人仓 Release 标签用 `v2.4.1`，上传同一份 APK，两处 asset 哈希必须一致。顺序上先发官方仓、再发镜像；README 的安装入口始终指向官方仓，所以镜像未及时更新时用户不会装到旧版。
+Linux 构建必须通过 `KEYSTORE_PASSWORD` 明确提供签名密码，不再使用隐式默认密码。已有密钥请输入原密码；以下交互示例不把密码写入命令历史或工具参数：
+
+```bash
+read -r -s -p '签名密钥密码: ' KEYSTORE_PASSWORD
+printf '\n'
+export KEYSTORE_PASSWORD
+bash build-linux.sh
+```
+
+同一工作区的 Linux 构建使用 `module/.build-linux.lock` 互斥；已有构建运行时，新调用立即报错，不清理在途产物。锁由进程持有并自动释放，锁文件留存属于正常现象，请勿删除运行中的锁文件。
+
+不需要将 SDK 工具加入 `PATH`，不需要 `cygpath`。SDK 根目录依次取 `ANDROID_HOME`、`ANDROID_SDK_ROOT`、`/opt/android-sdk`；设置了 `JAVA_HOME` 时使用其中的 JDK，否则从 `PATH` 查找 Java 工具。
+
+| 环境变量 | 默认值 / 用途 |
+|---|---|
+| `BT` | `$SDK_ROOT/build-tools/34.0.0` |
+| `AJ` | `$SDK_ROOT/platforms/android-34/android.jar` |
+| `D8` | `$SDK_ROOT/cmdline-tools/latest/bin/d8`，可指定其他兼容版本的可执行文件路径 |
+| `APPDIR` | 仓库根目录下的 `dist/`，指定交付目录 |
+| `KEYSTORE` | 默认 `module/mod.keystore`；可指定已存在的外部签名密钥，不能位于构建输出目录、交付目标或锁文件路径 |
+| `KEYSTORE_PASSWORD` | 必填环境变量；新建本地密钥至少 12 个字符，已有密钥仍使用原密码 |
+| `KEY_PASSWORD` | 默认同 `KEYSTORE_PASSWORD`；可为已有密钥指定不同的私钥密码，新建 PKCS12 时两者必须相同 |
+| `KEY_ALIAS` | 单密钥自动选择；新建本地密钥默认 `mod`，多密钥 keystore 需明确指定别名 |
+
+例如 SDK 安装在用户目录时：
+
+```bash
+ANDROID_HOME="$HOME/Android/Sdk" bash build-linux.sh
+```
+
+完成构建后可运行 `unset KEYSTORE_PASSWORD KEY_PASSWORD` 清除当前 shell 中的密码变量。自动化构建应从受保护的 secret 注入这些变量，不要把真实密码提交到仓库。
+
+### 产物与签名
+
+构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.5.0.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
+
+Linux 仅在未指定 `KEYSTORE` 且默认本地密钥不存在时创建测试签名身份；密码需由调用方提供，建议使用密码管理器生成。密钥先写入 `module/mod.keystore.tmp.*/` 私有临时目录，成功后再原子移动到正式路径，新密钥权限为 `0600`。已有默认本地密钥只收紧文件权限，内容和密码不变；损坏或密码错误时明确失败，不自动重建。
+
+正式分发请通过 `KEYSTORE` 指定仓库外的原发布密钥，并提供相应密码，不能混用本地测试签名。外部密钥只能复用，不能向组或其他用户开放权限（建议 `0600`，只读可用 `0400`）；脚本不会修改其内容或权限。路径检查解析符号链接，拒绝与构建清理、锁文件或交付目标冲突的密钥；外部密钥在编译中途消失也不会被自动创建。
+
+两个 Windows 脚本仍保留原有签名约定，不支持本节新增的密码环境变量。Linux 新建的强密码密钥若需在 Windows 复用，Windows 侧也必须使用同一密码；不要为迁就旧脚本而重新生成或降级已有密钥。
+
+Linux 交付 APK 时，先复制到交付目录中的临时文件，再原子替换目标 APK；复制失败时保留上一次的完整产物。正常退出和捕获到 `SIGINT` / `SIGTERM` 时清理本次临时文件；不可捕获的终止或断电可能留下临时文件，临时密钥目录也已加入忽略规则，避免误提交。
+
+官方模块仓库的 Release 标题使用 `2.5.0`，标签使用 `13-2.5.0`，随 Release 上传 APK，并使用 changelog 的 2.5.0 条目作为更新说明。
+
+发布后同步个人仓镜像：个人仓 Release 标签用 `v2.5.0`，上传同一份 APK，两处 asset 哈希必须一致。顺序上先发官方仓、再发镜像；README 的安装入口始终指向官方仓，所以镜像未及时更新时用户不会装到旧版。
 
 ## 📜 许可证
 

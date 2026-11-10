@@ -1,6 +1,6 @@
 # module/meta —— 现代打包（libxposed）元数据的源头
 
-这三个文件会被 `build.sh` / `build.ps1` 用 `aapt add` **原样塞进 APK 的 `META-INF/xposed/` 根目录**
+这三个文件会被 `build.sh` / `build.ps1` / `build-linux.sh` 用 `aapt add` **原样塞进 APK 的 `META-INF/xposed/` 根目录**
 （不是 `assets/`；LSPosed 只看 APK 根下的 `META-INF/xposed/`）。
 
 | 文件 | 作用 |
