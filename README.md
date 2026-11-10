@@ -164,7 +164,12 @@ bash build.sh
 
 使用独立的 `build-linux.sh`，需要 Bash 4.4+、GNU 常用工具、`unzip`、util-linux 的 `flock`，以及 **Android SDK Command-Line Tools 22.0** 中的新版 D8。Build Tools 34 自带的旧 D8 无法处理本机 JDK 21 生成的无名参数元数据；Linux 脚本明确使用命令行工具中的 D8，其余打包工具仍来自 Build Tools 34.0.0。已验证 JDK 21 + D8 9.3.16。
 
+Linux 构建必须通过 `KEYSTORE_PASSWORD` 明确提供签名密码，不再使用隐式默认密码。已有密钥请输入原密码；以下交互示例不把密码写入命令历史或工具参数：
+
 ```bash
+read -r -s -p '签名密钥密码: ' KEYSTORE_PASSWORD
+printf '\n'
+export KEYSTORE_PASSWORD
 bash build-linux.sh
 ```
 
@@ -172,12 +177,16 @@ bash build-linux.sh
 
 不需要将 SDK 工具加入 `PATH`，不需要 `cygpath`。SDK 根目录依次取 `ANDROID_HOME`、`ANDROID_SDK_ROOT`、`/opt/android-sdk`；设置了 `JAVA_HOME` 时使用其中的 JDK，否则从 `PATH` 查找 Java 工具。
 
-| 可选环境变量 | 默认值 / 用途 |
+| 环境变量 | 默认值 / 用途 |
 |---|---|
 | `BT` | `$SDK_ROOT/build-tools/34.0.0` |
 | `AJ` | `$SDK_ROOT/platforms/android-34/android.jar` |
 | `D8` | `$SDK_ROOT/cmdline-tools/latest/bin/d8`，可指定其他兼容版本的可执行文件路径 |
 | `APPDIR` | 仓库根目录下的 `dist/`，指定交付目录 |
+| `KEYSTORE` | 默认 `module/mod.keystore`；可指定已存在的外部签名密钥，不能位于构建输出目录、交付目标或锁文件路径 |
+| `KEYSTORE_PASSWORD` | 必填环境变量；新建本地密钥至少 12 个字符，已有密钥仍使用原密码 |
+| `KEY_PASSWORD` | 默认同 `KEYSTORE_PASSWORD`；可为已有密钥指定不同的私钥密码，新建 PKCS12 时两者必须相同 |
+| `KEY_ALIAS` | 单密钥自动选择；新建本地密钥默认 `mod`，多密钥 keystore 需明确指定别名 |
 
 例如 SDK 安装在用户目录时：
 
@@ -185,11 +194,17 @@ bash build-linux.sh
 ANDROID_HOME="$HOME/Android/Sdk" bash build-linux.sh
 ```
 
+完成构建后可运行 `unset KEYSTORE_PASSWORD KEY_PASSWORD` 清除当前 shell 中的密码变量。自动化构建应从受保护的 secret 注入这些变量，不要把真实密码提交到仓库。
+
 ### 产物与签名
 
 构建产物为 `module/build/module.apk`，另复制到 `dist/FriendlySchool-LSPosed-v2.4.1.apk`；可用 `APPDIR` 环境变量指定交付目录。首次构建自动生成 `module/mod.keystore`，后续更新须复用同一密钥；密钥与构建产物均不入库。
 
-Linux 首次生成密钥时，先写入 `module/mod.keystore.tmp.*/` 私有临时目录，成功后再原子移动到正式路径；新密钥权限为 `0600`。已有密钥和密码保持原样，损坏或密码不匹配时明确失败，不自动删除或重建签名身份。
+Linux 仅在未指定 `KEYSTORE` 且默认本地密钥不存在时创建测试签名身份；密码需由调用方提供，建议使用密码管理器生成。密钥先写入 `module/mod.keystore.tmp.*/` 私有临时目录，成功后再原子移动到正式路径，新密钥权限为 `0600`。已有默认本地密钥只收紧文件权限，内容和密码不变；损坏或密码错误时明确失败，不自动重建。
+
+正式分发请通过 `KEYSTORE` 指定仓库外的原发布密钥，并提供相应密码，不能混用本地测试签名。外部密钥只能复用，不能向组或其他用户开放权限（建议 `0600`，只读可用 `0400`）；脚本不会修改其内容或权限。路径检查解析符号链接，拒绝与构建清理、锁文件或交付目标冲突的密钥；外部密钥在编译中途消失也不会被自动创建。
+
+两个 Windows 脚本仍保留原有签名约定，不支持本节新增的密码环境变量。Linux 新建的强密码密钥若需在 Windows 复用，Windows 侧也必须使用同一密码；不要为迁就旧脚本而重新生成或降级已有密钥。
 
 Linux 交付 APK 时，先复制到交付目录中的临时文件，再原子替换目标 APK；复制失败时保留上一次的完整产物。正常退出和捕获到 `SIGINT` / `SIGTERM` 时清理本次临时文件；不可捕获的终止或断电可能留下临时文件，临时密钥目录也已加入忽略规则，避免误提交。
 

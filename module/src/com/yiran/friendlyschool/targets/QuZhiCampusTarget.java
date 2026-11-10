@@ -35,6 +35,9 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
 
     private final Set<Method> installed = new HashSet<Method>();
 
+    /** 复用既有弱引用、对象身份投递状态；每个 Activity 独立，避免进程级开关误伤下次启动。 */
+    private final CoolApkSplashDispatch splashDispatch = new CoolApkSplashDispatch();
+
     @Override
     public String shortName() {
         return "趣智校园";
@@ -50,6 +53,7 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
         ctx.onAppReady(this::installHooks);
     }
 
+    /** 串行补装 attach/onCreate 两个阶段；只有成功注册的方法才进入 installed。 */
     private synchronized void installHooks(ClassLoader cl) {
         installConfig(cl);
         installSplash(cl);
@@ -57,6 +61,7 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
         installHome(cl);
     }
 
+    /** 关闭广告专用配置的读取结果，不修改持久化配置、设备菜单或账号数据。 */
     private void installConfig(ClassLoader cl) {
         try {
             Class<?> config = Xp.findClass("xm.j", cl);
@@ -80,6 +85,10 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
         }
     }
 
+    /**
+     * 仅替换广告阶段，保留宿主 Handler 的登录检查和主页分流。
+     * PENDING 在投递前占位，SENT 跨消息消费保持；投递失败允许同一实例重试。
+     */
     private void installSplash(ClassLoader cl) {
         try {
             Class<?> splash = Xp.findClass(SPLASH, cl);
@@ -91,17 +100,37 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
                     continue;
                 }
                 Xp.hook(method, chain -> {
-                    Object value = Xp.getObjectField(chain.getThisObject(), "h");
+                    Object receiver = chain.getThisObject();
+                    if (!splash.isInstance(receiver)) {
+                        return chain.proceed();
+                    }
+                    Activity activity = (Activity) receiver;
+                    if (activity.isFinishing() || activity.isDestroyed()
+                            || !splashDispatch.tryMarkPending(activity)) {
+                        return null;
+                    }
+                    Object value = Xp.getObjectField(activity, "h");
                     if (!(value instanceof Handler)) {
+                        splashDispatch.markDispatchFailed(activity);
                         log("splash FAILED: 原生分流 Handler 不可用，保留原流程");
                         return chain.proceed();
                     }
                     Handler handler = (Handler) value;
-                    handler.removeMessages(2);
-                    if (!handler.hasMessages(1) && !handler.sendEmptyMessage(1)) {
+                    boolean queued;
+                    try {
+                        handler.removeMessages(2);
+                        queued = handler.hasMessages(1) || handler.sendEmptyMessage(1);
+                    } catch (Throwable t) {
+                        splashDispatch.markDispatchFailed(activity);
+                        log("splash FAILED: 原生分流消息投递异常，保留原流程: " + t);
+                        return chain.proceed();
+                    }
+                    if (!queued) {
+                        splashDispatch.markDispatchFailed(activity);
                         log("splash FAILED: 原生分流消息投递失败，保留原流程");
                         return chain.proceed();
                     }
+                    splashDispatch.markSent(activity);
                     logOnce("hit: 启动广告阶段 " + name + " -> 原生登录/主页分流");
                     return null;
                 });
@@ -113,6 +142,10 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
         }
     }
 
+    /**
+     * 仅让目标开屏 Activity 调用宿主无广告退场；失败时记录原因并回退原加载。
+     * 若退场已结束 Activity，则不能向已结束页面再次加载广告。
+     */
     private void installTopOnSplash(ClassLoader cl) {
         try {
             Class<?> manager = Xp.findClass("bl.h", cl);
@@ -129,8 +162,15 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
                 }
                 Activity activity = (Activity) value;
                 if (!activity.isFinishing() && !activity.isDestroyed()) {
-                    Xp.callMethod(activity, "f");
-                    logOnce("hit: TopOn 开屏 -> 原生无广告退场");
+                    try {
+                        Xp.callMethod(activity, "f");
+                        logOnce("hit: TopOn 开屏 -> 原生无广告退场");
+                    } catch (Throwable t) {
+                        log("TopOn exit FAILED: " + t);
+                        if (!activity.isFinishing() && !activity.isDestroyed()) {
+                            return chain.proceed();
+                        }
+                    }
                 }
                 return null;
             });
@@ -141,6 +181,7 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
         }
     }
 
+    /** 原方法执行后清理首页；即使查找到继承方法，也不得处理其它 Fragment 实例。 */
     private void installHome(ClassLoader cl) {
         try {
             Class<?> home = Xp.findClass(PREFIX + "fragment.HomeFragment", cl);
@@ -151,6 +192,9 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
                 }
                 Xp.hook(method, chain -> {
                     Object result = chain.proceed();
+                    if (!home.isInstance(chain.getThisObject())) {
+                        return result;
+                    }
                     try {
                         hideHomeAds(chain.getThisObject());
                     } catch (Throwable t) {
@@ -166,6 +210,10 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
         }
     }
 
+    /**
+     * 在业务根视图中仅隐藏明确的广告资源。
+     * 父容器不再符合已验证结构时只隐藏子视图，不能为消除空槽而扩大隐藏范围。
+     */
     private void hideHomeAds(Object fragment) {
         // initView 在 onCreateView 返回前执行，此时 Fragment.getView() 可能仍为 null。
         Object value = Xp.getObjectField(fragment, "w");
@@ -195,6 +243,7 @@ public final class QuZhiCampusTarget extends SchoolTargetBase {
         logOnce("hit: 首页广告/返现容器已收起，设备菜单和消息中心保留");
     }
 
+    /** 返回签名和返回类型均匹配且尚未注册的方法；缺失项保留给下一装载阶段重试。 */
     private Method pendingMethod(Class<?> cls, String name, Class<?> resultType, Class<?>... params) {
         Method method = Xp.findMethod(cls, name, params);
         if (method == null || method.getReturnType() != resultType) {

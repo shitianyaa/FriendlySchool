@@ -6,15 +6,24 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MOD="$ROOT/module"
 OUT="$MOD/build"
+LOCK_FILE="$MOD/.build-linux.lock"
 API="$MOD/lib/api-102.jar"
-KS="$MOD/mod.keystore"
+KS="${KEYSTORE:-$MOD/mod.keystore}"
 META_DIR="$MOD/meta/META-INF/xposed"
 MANIFEST="$MOD/AndroidManifest.xml"
 APPDIR="${APPDIR:-$ROOT/dist}"
 APK_NAME="FriendlySchool-LSPosed-v2.4.1.apk"
 
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
 # Arch/CachyOS 的 SDK 默认安装在 /opt/android-sdk；其他位置可通过环境变量覆盖。
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}"
+if [ -z "${BT:-}" ] && [ ! -d "$SDK_ROOT/build-tools" ]; then
+  fail "SDK 根目录无效（缺少 build-tools）: $SDK_ROOT；请检查 ANDROID_HOME / ANDROID_SDK_ROOT，或显式设置 BT"
+fi
 BT="${BT:-$SDK_ROOT/build-tools/34.0.0}"
 AJ="${AJ:-$SDK_ROOT/platforms/android-34/android.jar}"
 if [ -n "${JAVA_HOME:-}" ]; then
@@ -35,11 +44,6 @@ AAPT="$BT/aapt"
 ZIPALIGN="$BT/zipalign"
 APKSIGNER="$BT/apksigner"
 
-fail() {
-  echo "$*" >&2
-  exit 1
-}
-
 KEY_TMP_DIR=""
 FINAL_TMP=""
 cleanup() {
@@ -54,8 +58,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for tool in "$D8" "$AAPT2" "$AAPT" "$ZIPALIGN" "$APKSIGNER" \
-  "$JAVAC" "$JAR" "$KEYTOOL" unzip flock; do
+command -v "$D8" >/dev/null 2>&1 \
+  || fail "缺少可执行 D8 工具: $D8；请安装 Android SDK Command-Line Tools 22.0，或通过 D8 指定兼容版本"
+for tool in "$AAPT2" "$AAPT" "$ZIPALIGN" "$APKSIGNER" \
+  "$JAVAC" "$JAR" "$KEYTOOL" unzip flock realpath stat; do
   command -v "$tool" >/dev/null 2>&1 || fail "缺少可执行工具: $tool"
 done
 for file in "$AJ" "$API" "$MANIFEST" \
@@ -63,9 +69,44 @@ for file in "$AJ" "$API" "$MANIFEST" \
   [ -f "$file" ] || fail "缺少依赖文件: $file"
 done
 
+# 密码通过环境变量交给工具，不放入命令行参数或使用隐式公开默认值。
+[ -n "${KEYSTORE_PASSWORD:-}" ] || fail "请通过 KEYSTORE_PASSWORD 明确提供签名密码；已有密钥仍使用原密码"
+KEY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+export KEYSTORE_PASSWORD KEY_PASSWORD
+# 先检查物理路径（含符号链接），避免清理输出、打开锁文件或交付 APK 时破坏密钥。
+KS_REAL="$(realpath -m -- "$KS")"
+OUT_REAL="$(realpath -m -- "$OUT")"
+case "$KS_REAL" in
+  "$OUT_REAL"|"$OUT_REAL"/*)
+    fail "签名密钥不能位于会被清理的构建输出目录内: $KS"
+    ;;
+esac
+if [ "$KS_REAL" = "$(realpath -m -- "$APPDIR/$APK_NAME")" ] \
+    || [ "$KS_REAL" = "$(realpath -m -- "$LOCK_FILE")" ]; then
+  fail "签名密钥不能与交付 APK 或构建锁共用路径: $KS"
+fi
+[ ! -e "$KS" ] || [ -f "$KS" ] || fail "签名密钥不是普通文件: $KS"
+if [ -n "${KEYSTORE:-}" ]; then
+  [ -f "$KS" ] || fail "外部 KEYSTORE 必须已存在，不自动创建发布签名身份: $KS"
+  KS_MODE="$(stat -Lc '%a' -- "$KS")"
+  (( (8#$KS_MODE & 077) == 0 )) \
+    || fail "外部 KEYSTORE 不应向组或其他用户开放权限，请收紧为 0600 或 0400: $KS"
+elif [ ! -e "$KS" ]; then
+  [ "${#KEYSTORE_PASSWORD}" -ge 12 ] || fail "新建本地密钥的 KEYSTORE_PASSWORD 至少需要 12 个字符"
+  [ "$KEY_PASSWORD" = "$KEYSTORE_PASSWORD" ] \
+    || fail "新建 PKCS12 密钥要求 KEY_PASSWORD 与 KEYSTORE_PASSWORD 相同"
+fi
+SIGNING_ARGS=(--ks "$KS" --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD)
+if [ -n "${KEY_ALIAS:-}" ]; then
+  SIGNING_ARGS+=(--ks-key-alias "$KEY_ALIAS")
+fi
+
 # 锁文件不能放进会被 rm -rf 的 OUT；保持同一 inode 才能覆盖整个构建周期。
-exec {BUILD_LOCK_FD}>"$MOD/.build-linux.lock"
-flock -n "$BUILD_LOCK_FD" || fail "已有构建正在运行，未清理输出: $MOD/.build-linux.lock"
+exec {BUILD_LOCK_FD}>"$LOCK_FILE"
+flock -n "$BUILD_LOCK_FD" || fail "已有构建正在运行，未清理输出: $LOCK_FILE"
+if [ -z "${KEYSTORE:-}" ] && [ -f "$KS" ]; then
+  chmod 600 -- "$KS"
+fi
 
 ENTRY_CLASS="$(tr -d ' \r\n' < "$META_DIR/java_init.list")"
 
@@ -118,14 +159,15 @@ cp "$OUT/base.apk" "$OUT/unsigned.apk"
 
 echo "[7/7] zipalign + 签名"
 if [ ! -e "$KS" ]; then
+  [ -z "${KEYSTORE:-}" ] || fail "外部 KEYSTORE 已不可用，拒绝重新生成签名身份: $KS"
   # 临时目录与最终密钥位于同一文件系统；只有 keytool 成功后才发布密钥。
   # 不直接使用 mktemp 创建的空文件，keytool 会将其视为已存在的损坏 keystore。
   KEY_TMP_DIR="$(mktemp -d "$MOD/mod.keystore.tmp.XXXXXX")"
   (
     umask 077
-    "$KEYTOOL" -genkeypair -keystore "$KEY_TMP_DIR/mod.keystore" -alias mod \
+    "$KEYTOOL" -genkeypair -keystore "$KEY_TMP_DIR/mod.keystore" -alias "${KEY_ALIAS:-mod}" \
       -keyalg RSA -keysize 2048 -validity 10000 \
-      -storepass android -keypass android -dname "CN=friendlyschool, O=local"
+      -storepass:env KEYSTORE_PASSWORD -keypass:env KEY_PASSWORD -dname "CN=friendlyschool, O=local"
   )
   mv -- "$KEY_TMP_DIR/mod.keystore" "$KS"
   echo "      新建 keystore（之后重建复用）: $KS"
@@ -133,8 +175,7 @@ else
   echo "      复用已有 keystore: $KS"
 fi
 "$ZIPALIGN" -f -p 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
-"$APKSIGNER" sign --ks "$KS" --ks-pass pass:android \
-  --key-pass pass:android --v2-signing-enabled true \
+"$APKSIGNER" sign "${SIGNING_ARGS[@]}" --v2-signing-enabled true \
   --out "$OUT/module.apk" "$OUT/aligned.apk"
 
 echo
